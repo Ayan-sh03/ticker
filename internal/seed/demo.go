@@ -9,6 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"ticker/internal/identity"
 )
 
 type Summary struct {
@@ -21,9 +23,12 @@ type Summary struct {
 	SeatCount   int      `json:"seat_count"`
 }
 
-func Demo(ctx context.Context, pool *pgxpool.Pool, value int64) (Summary, error) {
+func Demo(ctx context.Context, pool *pgxpool.Pool, value int64, password string) (Summary, error) {
 	if value < 0 {
 		return Summary{}, errors.New("seed must be non-negative")
+	}
+	if len(password) < 12 || len(password) > 72 {
+		return Summary{}, errors.New("set DEMO_PASSWORD to a value containing 12–72 bytes")
 	}
 	summary := Summary{
 		Dataset:     "demo",
@@ -59,6 +64,21 @@ func Demo(ctx context.Context, pool *pgxpool.Pool, value int64) (Summary, error)
 		}
 		if !matches {
 			return Summary{}, errors.New("existing demo user differs from the fixture; no data was overwritten")
+		}
+		var passwordHash string
+		if err := tx.QueryRow(ctx, "SELECT coalesce(password_hash, '') FROM users WHERE id = $1 FOR UPDATE", user.id).Scan(&passwordHash); err != nil {
+			return Summary{}, err
+		}
+		if passwordHash == "" {
+			passwordHash, err = identity.HashPassword(password)
+			if err != nil {
+				return Summary{}, err
+			}
+			if _, err := tx.Exec(ctx, "UPDATE users SET password_hash = $2 WHERE id = $1", user.id, passwordHash); err != nil {
+				return Summary{}, err
+			}
+		} else if !identity.PasswordMatches(passwordHash, password) {
+			return Summary{}, errors.New("DEMO_PASSWORD differs from the existing fixture; no password was overwritten")
 		}
 	}
 	slug := fmt.Sprintf("city-concerts-demo-%d", value)

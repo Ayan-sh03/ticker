@@ -44,7 +44,7 @@ func run() error {
 		return err
 	}
 	defer pool.Close()
-	summary, err := seed.Demo(ctx, pool, *value)
+	summary, err := seed.Demo(ctx, pool, *value, os.Getenv("DEMO_PASSWORD"))
 	if err != nil {
 		return err
 	}
