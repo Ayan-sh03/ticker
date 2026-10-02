@@ -2,20 +2,31 @@
 
 ## Current scope
 
-- This phase is structure, Docker, and infrastructure setup only.
-- Do not implement booking, reservations, authentication, tenant rules, domain schemas, seed data, or other product features until the user expands the scope.
-- Keep domain directories as placeholders. Runnable entry points may contain only infrastructure wiring, health/readiness checks, metrics, and graceful shutdown.
+- Current authorized scope: infrastructure plus the initial catalog schema, deterministic demo seed, and read-only published-event/seat APIs.
+- The initial domain tables are users, tenants, memberships, events, and seats. Enforce tenant/event relationships and freeze published prices/layouts.
+- Do not implement reservations, bookings, authentication/session flows, organizer write APIs, or product UI until the user expands the scope.
+- Keep reservation and booking directories as placeholders. The worker remains infrastructure-only.
+
+## Work batch size
+
+- Keep future implementation batches roughly the size of the catalog foundation step: one initial schema, a demo seed, and a few read-only endpoints. Smaller batches are fine when the change is narrower.
+- Complete one coherent, runnable step at a time, then leave it for user review before starting the next milestone.
+- Keep the amount of code easy to inspect and trim. Avoid speculative abstractions, unnecessary boilerplate, and unrelated improvements.
+- Treat batch size as a scope limit, not a code quota; do not add code just to match the previous batch.
 
 ## Tests
 
 - Do not write any unit tests. The user explicitly requested this restriction.
-- Do not add integration or end-to-end test suites during this scaffolding phase.
-- Validate infrastructure with formatting, static analysis, compilation, Compose validation, and manual service smoke checks.
+- Do not add integration or end-to-end test suites without a later user instruction authorizing them.
+- Validate changes with formatting, static analysis, compilation, Compose validation, and manual database/API smoke checks.
 - Do not introduce testing frameworks, coverage requirements, or test-first workflows without a later user instruction expanding the scope.
 
 ## Project conventions
 
-- Follow PLAN.md for the intended architecture; its later milestones are not authorization to implement them now.
+- Follow the local, gitignored PLAN.md for the intended architecture and roadmap; its later milestones are not authorization to implement them now.
+- Keep AGENTS.md as the only tracked Markdown file for now. PLAN.md must remain local and gitignored.
+- Do not create README.md or other project-owned Markdown documentation yet; the user wants the README added at the end.
+- Use .gitkeep files to preserve empty scaffold directories.
 - Use Go net/http and pgx, React/TypeScript/Vite, and PostgreSQL. Do not add Redis, brokers, or microservices.
 - Keep API and worker as separate processes sharing one Go module.
 - Keep credentials in local environment files; commit only example development configuration.
@@ -24,6 +35,7 @@
 
 ## Git commits
 
+- Do not commit the current work until the user has reviewed it and explicitly authorizes committing.
 - Make small, atomic commits, each covering one coherent change.
 - Include only files relevant to that change; do not combine unrelated scaffolding, features, fixes, or documentation into a bulk commit.
 - Use concise, single-line commit messages that describe the change.
