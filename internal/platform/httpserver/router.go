@@ -11,9 +11,14 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"ticker/internal/catalog"
+	"ticker/internal/identity"
 )
 
-func Router(pool *pgxpool.Pool, logger *slog.Logger) http.Handler {
+func Router(pool *pgxpool.Pool, logger *slog.Logger, options identity.Options) (http.Handler, error) {
+	sessions, err := identity.NewService(pool)
+	if err != nil {
+		return nil, err
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, http.StatusOK, "ok")
@@ -29,7 +34,8 @@ func Router(pool *pgxpool.Pool, logger *slog.Logger) http.Handler {
 	})
 	mux.Handle("GET /metrics", promhttp.Handler())
 	catalog.RegisterRoutes(mux, catalog.NewStore(pool), logger)
-	return mux
+	identity.RegisterRoutes(mux, sessions, logger, options)
+	return mux, nil
 }
 
 func respond(w http.ResponseWriter, status int, message string) {

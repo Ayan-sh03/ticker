@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"ticker/internal/identity"
 	"ticker/internal/platform/config"
 	"ticker/internal/platform/database"
 	"ticker/internal/platform/httpserver"
@@ -35,9 +36,15 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	defer pool.Close()
+	router, err := httpserver.Router(pool, logger, identity.Options{
+		PublicOrigin: cfg.PublicOrigin, CookieSecure: cfg.CookieSecure,
+	})
+	if err != nil {
+		return err
+	}
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpserver.Router(pool, logger),
+		Handler:           router,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
