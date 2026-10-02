@@ -88,10 +88,25 @@ services:
     profiles: ["tools"]
     volumes:
       - ./db/migrations:/migrations:ro
-    command:
+    entrypoint:
+      - /migrate
       - -path=/migrations
       - -database=postgres://${POSTGRES_USER:-ticker}:${POSTGRES_PASSWORD:-ticker_dev}@db:5432/${POSTGRES_DB:-ticker}?sslmode=disable
-      - up
+    command: ["up"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  seed:
+    profiles: ["tools"]
+    build:
+      context: .
+      args:
+        APP: seed
+    environment:
+      <<: *backend-env
+      DB_MAX_CONNS: 2
+    command: ["--dataset", "demo", "--seed", "42"]
     depends_on:
       db:
         condition: service_healthy

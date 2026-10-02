@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 Push-Location (Join-Path $PSScriptRoot '..')
 try {
-    $unformatted = @(gofmt -l cmd internal)
+    $unformatted = @(gofmt -l cmd internal db/queries)
     if ($LASTEXITCODE -ne 0) { throw 'Go formatting check failed.' }
     if ($unformatted.Count -gt 0) {
         throw "Run gofmt on: $($unformatted -join ', ')"
