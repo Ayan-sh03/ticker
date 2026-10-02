@@ -37,7 +37,7 @@ func run(logger *slog.Logger) error {
 	defer pool.Close()
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpserver.Router(pool),
+		Handler:           httpserver.Router(pool, logger),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

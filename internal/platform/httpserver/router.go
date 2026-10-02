@@ -3,14 +3,17 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"ticker/internal/catalog"
 )
 
-func Router(pool *pgxpool.Pool) http.Handler {
+func Router(pool *pgxpool.Pool, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, http.StatusOK, "ok")
@@ -25,6 +28,7 @@ func Router(pool *pgxpool.Pool) http.Handler {
 		respond(w, http.StatusOK, "ready")
 	})
 	mux.Handle("GET /metrics", promhttp.Handler())
+	catalog.RegisterRoutes(mux, catalog.NewStore(pool), logger)
 	return mux
 }
 
