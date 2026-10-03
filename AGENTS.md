@@ -2,11 +2,11 @@
 
 ## Current scope
 
-- Current authorized scope: infrastructure, catalog schema and read-only APIs, deterministic demo seed, and seeded-account login/logout with cookie sessions.
+- Current authorized scope: infrastructure, catalog schema and read-only APIs, deterministic demo seed, seeded-account cookie sessions, and single-seat reservations.
 - The initial domain tables are users, tenants, memberships, events, and seats. Enforce tenant/event relationships and freeze published prices/layouts.
-- This batch adds password hashes, sessions, GET /me, and reusable session middleware. Validate it manually, then leave it uncommitted for review.
-- Do not implement reservations, bookings, organizer write APIs, public signup, password recovery, or product UI until the user expands the scope.
-- Keep reservation and booking directories as placeholders. The worker remains infrastructure-only.
+- This batch adds five-minute holds, owner-only reads/cancellation, request-key replay, and worker expiration. Validate it manually, then leave it uncommitted for review.
+- Do not implement booking confirmation, multi-seat acquisition, organizer write APIs, public signup, password recovery, or product UI until the user expands the scope.
+- Keep the booking directory as a placeholder. The worker processes reservation expiration only.
 
 ## Work batch size
 
