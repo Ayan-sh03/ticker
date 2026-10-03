@@ -6,9 +6,11 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"ticker/internal/platform/config"
 	"ticker/internal/platform/database"
+	"ticker/internal/reservation"
 )
 
 func main() {
@@ -31,8 +33,31 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	defer pool.Close()
-	logger.Info("worker infrastructure ready; expiration processing is not implemented")
-	<-ctx.Done()
-	logger.Info("worker shutting down")
-	return nil
+	store := reservation.NewStore(pool)
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	logger.Info("reservation expiration worker ready")
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Info("worker shutting down")
+			return nil
+		case <-ticker.C:
+			for count := 0; count < 100; count++ {
+				operationCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+				expired, err := store.ExpireOne(operationCtx)
+				cancel()
+				if ctx.Err() != nil {
+					return nil
+				}
+				if err != nil {
+					logger.Error("reservation expiration failed", "error", err)
+					break
+				}
+				if !expired {
+					break
+				}
+			}
+		}
+	}
 }
