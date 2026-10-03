@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"ticker/internal/booking"
 	"ticker/internal/catalog"
 	"ticker/internal/identity"
 	"ticker/internal/reservation"
@@ -37,6 +38,7 @@ func Router(pool *pgxpool.Pool, logger *slog.Logger, options identity.Options) (
 	catalog.RegisterRoutes(mux, catalog.NewStore(pool), logger)
 	identityHandler := identity.RegisterRoutes(mux, sessions, logger, options)
 	reservation.RegisterRoutes(mux, reservation.NewStore(pool), identityHandler, logger)
+	booking.RegisterRoutes(mux, booking.NewStore(pool), identityHandler, logger)
 	return mux, nil
 }
 
