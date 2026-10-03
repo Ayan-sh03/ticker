@@ -1,12 +1,12 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
+import '../tokens.css';
+import './app.css';
+import { App } from './App';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <main>
-      <h1>Ticker</h1>
-      <p>Project foundation is running.</p>
-    </main>
+    <App />
   </StrictMode>,
 );
