@@ -24,6 +24,7 @@ type Reservation struct {
 	CreatedAt  time.Time `json:"created_at"`
 	ExpiresAt  time.Time `json:"expires_at"`
 	ServerTime time.Time `json:"server_time"`
+	BookingID  *string   `json:"booking_id,omitempty"`
 }
 
 // Result preserves the original response, including its timestamp, on replay.
@@ -233,7 +234,7 @@ func release(ctx context.Context, tx pgx.Tx, id, status string) error {
 func scan(row pgx.Row) (Reservation, error) {
 	var reservation Reservation
 	err := row.Scan(&reservation.ID, &reservation.EventID, &reservation.SeatID, &reservation.Status,
-		&reservation.CreatedAt, &reservation.ExpiresAt, &reservation.ServerTime)
+		&reservation.CreatedAt, &reservation.ExpiresAt, &reservation.ServerTime, &reservation.BookingID)
 	return reservation, err
 }
 
