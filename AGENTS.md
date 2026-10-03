@@ -4,7 +4,8 @@
 
 - Current authorized scope: infrastructure, catalog schema and read-only APIs, deterministic demo seed, seeded-account cookie sessions, single-seat reservations, booking confirmation with owner-only receipts, and the initial customer UI.
 - The initial domain tables are users, tenants, memberships, events, and seats. Enforce tenant/event relationships and freeze published prices/layouts.
-- This UI batch adds login/logout, event browsing, and read-only availability with single-seat selection. Validate it manually, then leave it uncommitted for review. Reservation and confirmation UI belong to a later batch.
+- The current UI batch adds single-seat reservation, server-based countdown, cancellation of own holds, confirmation and owner receipts, and durable recovery of pending requests through the existing APIs. Preserve the reviewed customer UI design. Validate manually, then leave it uncommitted for review.
+- Protected UI requests assert their expected account with `X-Ticker-User`; the API must reject a mismatch with the cookie owner before any mutation or private read.
 - Use Hallmark for the UI. Do not use other skills unless the user asks later. Keep the design minimal and interactions snappy.
 - Do not implement confirmed-booking cancellation, multi-seat acquisition, organizer write APIs, public signup, password recovery, or payment integration until the user expands the scope.
 - The worker processes reservation expiration only.

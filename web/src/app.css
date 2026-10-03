@@ -66,6 +66,15 @@ main.content { flex: 1; max-width: none; margin: 0; padding: var(--space-2xl) 0 
 .selection-detail p { margin-bottom: var(--space-md); font-size: var(--text-sm); }
 .selection-detail .selected-seat { color: var(--color-ink); font-size: var(--text-body); font-weight: 500; }
 .selection-detail .button { margin-top: var(--space-sm); }
+.selected-seat small { display: block; color: var(--color-muted); font-size: var(--text-sm); font-weight: 400; }
+.reservation-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); }
+.countdown { color: var(--color-ink); font-size: 1.5rem !important; font-variant-numeric: tabular-nums; }
+.countdown small { font-size: var(--text-sm); color: var(--color-muted); }
+.seat.seat-owned:disabled { background: var(--color-accent); color: var(--color-accent-ink); border: 2px solid var(--color-ink); border-style: solid; }
+.receipt h3 { font-size: 1.125rem; margin-block: var(--space-xl) var(--space-md); }
+.receipt dl { margin-block: var(--space-xl); font-size: var(--text-sm); }
+.receipt dt { color: var(--color-muted); margin-top: var(--space-lg); }
+.receipt dd { margin: 0; overflow-wrap: anywhere; }
 .error { color: var(--color-error); font-size: var(--text-sm); }
 .error-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-lg); margin-block: var(--space-xl); }
 .loading { padding-block: var(--space-xl); }

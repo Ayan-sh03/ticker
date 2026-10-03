@@ -55,6 +55,12 @@ func (h *Handler) RequireUser(next http.Handler) http.Handler {
 			h.serviceError(w, r, err)
 			return
 		}
+		// This optional assertion restricts the cookie's actor; it never grants
+		// access. It prevents another tab's login from changing a UI request owner.
+		if expected := r.Header.Get("X-Ticker-User"); expected != "" && expected != session.User.ID {
+			writeError(w, http.StatusUnauthorized, "account_changed", "the signed-in account changed; reload before continuing")
+			return
+		}
 		w.Header().Set("Cache-Control", "no-store")
 		// The lookup timeout does not shorten the downstream handler's request budget.
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), sessionKey{}, session)))
@@ -116,6 +122,22 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
+	if expected := r.Header.Get("X-Ticker-User"); expected != "" {
+		session, err := h.service.Lookup(ctx, requestToken(r))
+		if errors.Is(err, ErrSession) {
+			h.clearCookie(w)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if err != nil {
+			h.serviceError(w, r, err)
+			return
+		}
+		if session.User.ID != expected {
+			writeError(w, http.StatusUnauthorized, "account_changed", "the signed-in account changed; reload before continuing")
+			return
+		}
+	}
 	if err := h.service.Revoke(ctx, requestToken(r)); err != nil {
 		h.serviceError(w, r, err)
 		return

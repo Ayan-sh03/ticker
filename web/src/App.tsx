@@ -4,7 +4,8 @@ import { EventView } from './EventView';
 import { ErrorMessage } from './Feedback';
 
 export function App() {
-  const [eventID, setEventID] = useState(() => location.hash.slice(1));
+  const [eventID, setEventID] = useState(() => location.hash.slice(1).toLowerCase());
+  const [selectedID, select] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [checking, setChecking] = useState(true);
   const [accountError, setAccountError] = useState('');
@@ -13,7 +14,7 @@ export function App() {
   const heading = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
-    const change = () => { setEventID(location.hash.slice(1)); };
+    const change = () => { setEventID(location.hash.slice(1).toLowerCase()); select(null); };
     window.addEventListener('hashchange', change);
     return () => window.removeEventListener('hashchange', change);
   }, []);
@@ -29,12 +30,16 @@ export function App() {
   }, []);
 
   async function logout() {
+    select(null);
     setLoggingOut(true);
     setAccountError('');
     try {
-      await request<void>('/sessions/current', { method: 'DELETE' });
+      await request<void>('/sessions/current', { method: 'DELETE', headers: { 'X-Ticker-User': session!.user.id } });
       setSession(null);
-    } catch { setAccountError('Unable to log out. Please try again.'); }
+    } catch (failure) {
+      if (failure instanceof ApiError && failure.status === 401) setSession(null);
+      else setAccountError('Unable to log out. Please try again.');
+    }
     finally { setLoggingOut(false); }
   }
 
@@ -52,7 +57,9 @@ export function App() {
     {accountError && <p className="error" role="alert">{accountError}</p>}
     <main className="content" id="content" tabIndex={-1}>
       {eventID && eventID !== 'content'
-        ? <EventView key={eventID} id={eventID} heading={heading} />
+        ? <EventView key={`${eventID}:${loggingOut ? 'leaving' : session?.user.id ?? 'guest'}`} id={eventID} heading={heading}
+          session={loggingOut ? null : session} checking={checking || loggingOut} selectedID={selectedID} select={select}
+          onLogin={() => dialog.current?.showModal()} onSessionExpired={() => { select(null); setSession(null); }} />
         : <EventIndex heading={heading} />}
     </main>
     <footer className="footer"><span>Ticker</span><span>Choose your seat.</span></footer>

@@ -24,8 +24,28 @@ export interface Session {
   expires_at: string;
 }
 
+export interface Reservation {
+  id: string;
+  event_id: string;
+  seat_id: string;
+  status: 'HELD' | 'CONFIRMED' | 'EXPIRED' | 'CANCELLED';
+  expires_at: string;
+  server_time: string;
+  booking_id?: string;
+}
+
+export interface Booking {
+  id: string;
+  reservation_id: string;
+  event_id: string;
+  seat_id: string;
+  price_minor: number;
+  currency: string;
+  created_at: string;
+}
+
 export class ApiError extends Error {
-  constructor(public status: number, message: string) { super(message); }
+  constructor(public status: number, message: string, public code?: string) { super(message); }
 }
 
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -39,7 +59,7 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
   });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
-    throw new ApiError(response.status, body?.error?.message ?? 'The request failed. Please try again.');
+    throw new ApiError(response.status, body?.error?.message ?? 'The request failed. Please try again.', body?.error?.code);
   }
   return response.status === 204 ? undefined as T : response.json();
 }
@@ -89,7 +109,7 @@ export function useResource<T>(path: string | null, poll = 0) {
   return { ...(state.path === path ? state : {}), retry: () => setRevision(value => value + 1) };
 }
 
-export function price(event: Event) {
+export function price(event: Pick<Event, 'price_minor' | 'currency'>) {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: event.currency }).format(event.price_minor / 100);
 }
 
