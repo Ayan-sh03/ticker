@@ -25,6 +25,44 @@ func RegisterRoutes(mux *http.ServeMux, store *Store, sessions *identity.Handler
 	mux.Handle("POST /reservations", sessions.RequireUser(http.HandlerFunc(h.reserve)))
 	mux.Handle("GET /reservations/{reservationID}", sessions.RequireUser(http.HandlerFunc(h.get)))
 	mux.Handle("DELETE /reservations/{reservationID}", sessions.RequireUser(http.HandlerFunc(h.cancel)))
+	mux.Handle("POST /reservations/{reservationID}/confirm", sessions.RequireUser(http.HandlerFunc(h.confirm)))
+}
+
+func (h *Handler) confirm(w http.ResponseWriter, r *http.Request) {
+	key := r.Header.Get("Idempotency-Key")
+	if len(r.Header.Values("Idempotency-Key")) != 1 || len(key) == 0 || len(key) > 128 {
+		writeResult(w, failure(400, "invalid_request_key", "provide one Idempotency-Key header containing 1–128 visible ASCII characters"))
+		return
+	}
+	for _, char := range key {
+		if char < '!' || char > '~' {
+			writeResult(w, failure(400, "invalid_request_key", "request key must contain only visible ASCII characters"))
+			return
+		}
+	}
+	id, ok := canonicalID(r.PathValue("reservationID"))
+	if !ok {
+		writeResult(w, failure(400, "invalid_reservation_id", "reservation ID must be a UUID"))
+		return
+	}
+	// Confirmation has no client-supplied ownership or pricing fields. The
+	// normalized reservation path is the complete idempotency payload.
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	defer r.Body.Close()
+	body, err := io.ReadAll(r.Body)
+	if err != nil || len(body) != 0 {
+		writeResult(w, failure(400, "invalid_confirmation_payload", "confirmation requires an empty body"))
+		return
+	}
+	session, _ := identity.CurrentSession(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	result, err := h.store.Confirm(ctx, session.User.ID, key, id)
+	if err != nil {
+		h.storeError(w, r, err)
+		return
+	}
+	writeResult(w, result)
 }
 
 func (h *Handler) reserve(w http.ResponseWriter, r *http.Request) {
