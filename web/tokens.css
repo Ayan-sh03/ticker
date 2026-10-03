@@ -1,0 +1,37 @@
+/* Hallmark · Index-First · modern-minimal · Coral (28°) · utilitarian · N9 / Ft2 · enrichment: none */
+@font-face {
+  font-family: 'Geist';
+  src: url('/fonts/geist-latin.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --font-body: 'Geist', ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-body);
+  --color-paper: oklch(96.5% 0.005 50);
+  --color-paper-2: oklch(94% 0.006 50);
+  --color-rule: oklch(86% 0.008 50);
+  --color-control: oklch(58% 0.01 50);
+  --color-muted: oklch(49% 0.012 50);
+  --color-ink: oklch(20% 0.01 35);
+  --color-accent: oklch(64% 0.165 28);
+  --color-accent-ink: var(--color-ink);
+  --color-focus: oklch(46% 0.13 28);
+  --color-error: oklch(43% 0.15 28);
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 0.75rem;
+  --space-lg: 1rem;
+  --space-xl: 1.5rem;
+  --space-2xl: 2.5rem;
+  --space-3xl: 4rem;
+  --text-sm: 0.875rem;
+  --text-body: 1rem;
+  --text-heading: clamp(2rem, 3vw + 0.5rem, 3rem);
+  --radius-input: 0.375rem;
+  --radius-pill: 999px;
+  --dur-micro: 120ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
