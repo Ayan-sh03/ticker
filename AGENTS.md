@@ -2,12 +2,13 @@
 
 ## Current scope
 
-- Current authorized scope: infrastructure, catalog schema and read-only APIs, deterministic demo seed, seeded-account cookie sessions, single-seat reservations, booking confirmation with owner-only receipts, and the initial customer UI.
+- Current authorized scope: infrastructure, catalog schema and read-only APIs, deterministic demo seed, seeded-account cookie sessions, single-seat reservations, booking confirmation with owner-only receipts, the initial customer UI, and tenant-scoped organizer draft and publication APIs.
 - The initial domain tables are users, tenants, memberships, events, and seats. Enforce tenant/event relationships and freeze published prices/layouts.
-- The current UI batch adds single-seat reservation, server-based countdown, cancellation of own holds, confirmation and owner receipts, and durable recovery of pending requests through the existing APIs. Preserve the reviewed customer UI design. Validate manually, then leave it uncommitted for review.
+- The customer reservation UI is reviewed and committed. Preserve its design and behavior.
+- The current backend batch adds organizer membership checks, draft event creation/list/detail, and atomic publication with rectangular seat generation. Drafts stay private; published prices and layouts remain frozen. Implement draft and publication work in parallel, validate the integrated flow manually, and leave it uncommitted for review. Organizer UI belongs to a later batch.
 - Protected UI requests assert their expected account with `X-Ticker-User`; the API must reject a mismatch with the cookie owner before any mutation or private read.
 - Use Hallmark for the UI. Do not use other skills unless the user asks later. Keep the design minimal and interactions snappy.
-- Do not implement confirmed-booking cancellation, multi-seat acquisition, organizer write APIs, public signup, password recovery, or payment integration until the user expands the scope.
+- Do not implement confirmed-booking cancellation, multi-seat acquisition, organizer writes beyond draft creation and publication, public signup, password recovery, or payment integration until the user expands the scope.
 - The worker processes reservation expiration only.
 
 ## Work batch size

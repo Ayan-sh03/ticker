@@ -90,5 +90,7 @@ func scanEvent(row pgx.Row) (Event, error) {
 	var event Event
 	err := row.Scan(&event.ID, &event.TenantID, &event.Title, &event.Description, &event.VenueName,
 		&event.PriceMinor, &event.Currency, &event.SalesOpenAt, &event.StartsAt, &event.LayoutRows, &event.LayoutColumns)
+	event.SalesOpenAt = event.SalesOpenAt.UTC()
+	event.StartsAt = event.StartsAt.UTC()
 	return event, err
 }

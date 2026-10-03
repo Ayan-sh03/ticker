@@ -1,0 +1,177 @@
+package organizer
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
+	"mime"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"ticker/internal/identity"
+)
+
+type Handler struct {
+	store  *Store
+	logger *slog.Logger
+}
+
+func RegisterRoutes(mux *http.ServeMux, store *Store, sessions *identity.Handler, logger *slog.Logger) {
+	h := &Handler{store: store, logger: logger}
+	mux.Handle("POST /organizer/tenants/{tenantID}/events", sessions.RequireUser(http.HandlerFunc(h.createEvent)))
+	mux.Handle("GET /organizer/tenants/{tenantID}/events", sessions.RequireUser(http.HandlerFunc(h.listEvents)))
+	mux.Handle("GET /organizer/tenants/{tenantID}/events/{eventID}", sessions.RequireUser(http.HandlerFunc(h.getEvent)))
+	mux.Handle("POST /organizer/tenants/{tenantID}/events/{eventID}/publish", sessions.RequireUser(http.HandlerFunc(h.publishEvent)))
+}
+
+func (h *Handler) createEvent(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := pathID(w, r, "tenantID")
+	if !ok {
+		return
+	}
+	contentType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || contentType != "application/json" {
+		writeError(w, http.StatusUnsupportedMediaType, "invalid_content_type", "use application/json")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	defer r.Body.Close()
+	var payload *DraftInput
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&payload) != nil || payload == nil || decoder.Decode(new(any)) != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid_event_payload", "provide one JSON object containing event details")
+		return
+	}
+	session, _ := identity.CurrentSession(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	event, err := h.store.CreateEvent(ctx, session.User.ID, tenantID, *payload)
+	if err != nil {
+		h.storeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"event": event})
+}
+
+func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := pathID(w, r, "tenantID")
+	if !ok {
+		return
+	}
+	limit, err := pageNumber(r, "limit", 20, 1, 100)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_pagination", "limit must be an integer from 1 to 100")
+		return
+	}
+	offset, err := pageNumber(r, "offset", 0, 0, 10000)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_pagination", "offset must be an integer from 0 to 10000")
+		return
+	}
+	session, _ := identity.CurrentSession(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	events, err := h.store.ListEvents(ctx, session.User.ID, tenantID, limit, offset)
+	if err != nil {
+		h.storeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events, "limit": limit, "offset": offset})
+}
+
+func (h *Handler) getEvent(w http.ResponseWriter, r *http.Request) { h.readOrPublish(w, r, false) }
+
+func (h *Handler) publishEvent(w http.ResponseWriter, r *http.Request) { h.readOrPublish(w, r, true) }
+
+func (h *Handler) readOrPublish(w http.ResponseWriter, r *http.Request, publish bool) {
+	tenantID, ok := pathID(w, r, "tenantID")
+	if !ok {
+		return
+	}
+	eventID, ok := pathID(w, r, "eventID")
+	if !ok {
+		return
+	}
+	if publish {
+		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		defer r.Body.Close()
+		body, err := io.ReadAll(r.Body)
+		if err != nil || len(body) != 0 {
+			writeError(w, http.StatusBadRequest, "invalid_publication_payload", "publication requires an empty body")
+			return
+		}
+	}
+	session, _ := identity.CurrentSession(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	var event Event
+	var err error
+	if publish {
+		event, err = h.store.PublishEvent(ctx, session.User.ID, tenantID, eventID)
+	} else {
+		event, err = h.store.GetEvent(ctx, session.User.ID, tenantID, eventID)
+	}
+	if err != nil {
+		h.storeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"event": event})
+}
+
+func (h *Handler) storeError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, ErrForbidden):
+		writeError(w, http.StatusForbidden, "organizer_required", "organizer membership for this tenant is required")
+	case errors.Is(err, ErrNotFound):
+		writeError(w, http.StatusNotFound, "event_not_found", "event not found")
+	case errors.Is(err, ErrInvalidEvent):
+		writeError(w, http.StatusUnprocessableEntity, "invalid_event", "provide a title and venue up to 200 characters, description up to 5000, a nonnegative safe integer price, three-letter uppercase currency, sales before a future start, and 1–100 rows and columns")
+	case errors.Is(err, ErrLayoutExists):
+		writeError(w, http.StatusConflict, "draft_layout_exists", "draft already has seats and cannot be published by this operation")
+	default:
+		h.logger.Error("organizer request failed", "path", r.URL.Path, "error", err)
+		writeError(w, http.StatusServiceUnavailable, "organizer_unavailable", "organizer service is temporarily unavailable")
+	}
+}
+
+func pathID(w http.ResponseWriter, r *http.Request, name string) (string, bool) {
+	value := r.PathValue(name)
+	var id pgtype.UUID
+	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' || id.Scan(value) != nil {
+		writeError(w, http.StatusBadRequest, "invalid_path_id", "tenant and event IDs must be UUIDs")
+		return "", false
+	}
+	return id.String(), true
+}
+
+func pageNumber(r *http.Request, name string, fallback, minimum, maximum int) (int, error) {
+	values, present := r.URL.Query()[name]
+	if !present {
+		return fallback, nil
+	}
+	if len(values) != 1 {
+		return 0, errors.New("duplicate pagination parameter")
+	}
+	value, err := strconv.Atoi(values[0])
+	if err != nil || value < minimum || value > maximum {
+		return 0, errors.New("invalid pagination value")
+	}
+	return value, nil
+}
+
+func writeError(w http.ResponseWriter, status int, code, message string) {
+	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": message}})
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(payload)
+}
