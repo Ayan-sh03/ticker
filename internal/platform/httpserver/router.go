@@ -12,6 +12,7 @@ import (
 
 	"ticker/internal/catalog"
 	"ticker/internal/identity"
+	"ticker/internal/reservation"
 )
 
 func Router(pool *pgxpool.Pool, logger *slog.Logger, options identity.Options) (http.Handler, error) {
@@ -34,7 +35,8 @@ func Router(pool *pgxpool.Pool, logger *slog.Logger, options identity.Options) (
 	})
 	mux.Handle("GET /metrics", promhttp.Handler())
 	catalog.RegisterRoutes(mux, catalog.NewStore(pool), logger)
-	identity.RegisterRoutes(mux, sessions, logger, options)
+	identityHandler := identity.RegisterRoutes(mux, sessions, logger, options)
+	reservation.RegisterRoutes(mux, reservation.NewStore(pool), identityHandler, logger)
 	return mux, nil
 }
 
