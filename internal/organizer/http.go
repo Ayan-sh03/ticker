@@ -23,10 +23,25 @@ type Handler struct {
 
 func RegisterRoutes(mux *http.ServeMux, store *Store, sessions *identity.Handler, logger *slog.Logger) {
 	h := &Handler{store: store, logger: logger}
+	mux.Handle("GET /organizer/tenants", sessions.RequireUser(http.HandlerFunc(h.listTenants)))
 	mux.Handle("POST /organizer/tenants/{tenantID}/events", sessions.RequireUser(http.HandlerFunc(h.createEvent)))
 	mux.Handle("GET /organizer/tenants/{tenantID}/events", sessions.RequireUser(http.HandlerFunc(h.listEvents)))
 	mux.Handle("GET /organizer/tenants/{tenantID}/events/{eventID}", sessions.RequireUser(http.HandlerFunc(h.getEvent)))
+	mux.Handle("PUT /organizer/tenants/{tenantID}/events/{eventID}", sessions.RequireUser(http.HandlerFunc(h.updateEvent)))
+	mux.Handle("DELETE /organizer/tenants/{tenantID}/events/{eventID}", sessions.RequireUser(http.HandlerFunc(h.deleteEvent)))
 	mux.Handle("POST /organizer/tenants/{tenantID}/events/{eventID}/publish", sessions.RequireUser(http.HandlerFunc(h.publishEvent)))
+}
+
+func (h *Handler) listTenants(w http.ResponseWriter, r *http.Request) {
+	session, _ := identity.CurrentSession(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	tenants, err := h.store.ListTenants(ctx, session.User.ID)
+	if err != nil {
+		h.storeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tenants": tenants})
 }
 
 func (h *Handler) createEvent(w http.ResponseWriter, r *http.Request) {
@@ -87,6 +102,79 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) getEvent(w http.ResponseWriter, r *http.Request) { h.readOrPublish(w, r, false) }
 
+func (h *Handler) updateEvent(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := pathID(w, r, "tenantID")
+	if !ok {
+		return
+	}
+	eventID, ok := pathID(w, r, "eventID")
+	if !ok {
+		return
+	}
+	var payload EditInput
+	if !decodeMutation(w, r, &payload) {
+		return
+	}
+	if payload.ExpectedVersion == nil || *payload.ExpectedVersion < 1 {
+		writeError(w, http.StatusBadRequest, "invalid_event_version", "provide a positive expected_version from the event you loaded")
+		return
+	}
+	session, _ := identity.CurrentSession(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	event, err := h.store.UpdateEvent(ctx, session.User.ID, tenantID, eventID, payload)
+	if err != nil {
+		h.storeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"event": event})
+}
+
+func (h *Handler) deleteEvent(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := pathID(w, r, "tenantID")
+	if !ok {
+		return
+	}
+	eventID, ok := pathID(w, r, "eventID")
+	if !ok {
+		return
+	}
+	var payload DeleteInput
+	if !decodeMutation(w, r, &payload) {
+		return
+	}
+	if payload.ExpectedVersion == nil || *payload.ExpectedVersion < 1 {
+		writeError(w, http.StatusBadRequest, "invalid_event_version", "provide a positive expected_version from the event you loaded")
+		return
+	}
+	session, _ := identity.CurrentSession(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	if err := h.store.DeleteEvent(ctx, session.User.ID, tenantID, eventID, payload); err != nil {
+		h.storeError(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func decodeMutation(w http.ResponseWriter, r *http.Request, payload any) bool {
+	contentType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || contentType != "application/json" {
+		writeError(w, http.StatusUnsupportedMediaType, "invalid_content_type", "use application/json")
+		return false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(payload) != nil || decoder.Decode(new(any)) != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid_event_payload", "provide one JSON object containing event details and expected_version")
+		return false
+	}
+	return true
+}
+
 func (h *Handler) publishEvent(w http.ResponseWriter, r *http.Request) { h.readOrPublish(w, r, true) }
 
 func (h *Handler) readOrPublish(w http.ResponseWriter, r *http.Request, publish bool) {
@@ -134,6 +222,14 @@ func (h *Handler) storeError(w http.ResponseWriter, r *http.Request, err error) 
 		writeError(w, http.StatusUnprocessableEntity, "invalid_event", "provide a title and venue up to 200 characters, description up to 5000, a nonnegative safe integer price, three-letter uppercase currency, sales before a future start, and 1–100 rows and columns")
 	case errors.Is(err, ErrLayoutExists):
 		writeError(w, http.StatusConflict, "draft_layout_exists", "draft already has seats and cannot be published by this operation")
+	case errors.Is(err, ErrVersionConflict):
+		writeError(w, http.StatusConflict, "event_version_conflict", "event changed since it was loaded; reload the latest event before saving")
+	case errors.Is(err, ErrFrozenLayout):
+		writeError(w, http.StatusConflict, "published_layout_frozen", "price, currency, and layout are locked after the first reservation")
+	case errors.Is(err, ErrLayoutConflict):
+		writeError(w, http.StatusConflict, "event_layout_conflict", "layout change conflicts with existing seats")
+	case errors.Is(err, ErrHasReservations):
+		writeError(w, http.StatusConflict, "event_has_reservations", "events with reservation history cannot be deleted")
 	default:
 		h.logger.Error("organizer request failed", "path", r.URL.Path, "error", err)
 		writeError(w, http.StatusServiceUnavailable, "organizer_unavailable", "organizer service is temporarily unavailable")

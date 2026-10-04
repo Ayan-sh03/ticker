@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { ApiError, date, price, request, useResource, type Event, type Session } from './api';
 import { EventView } from './EventView';
 import { ErrorMessage } from './Feedback';
+import { Organizer } from './Organizer';
+import './organizer.css';
 
 export function App() {
   const [eventID, setEventID] = useState(() => location.hash.slice(1).toLowerCase());
@@ -12,6 +14,8 @@ export function App() {
   const [loggingOut, setLoggingOut] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
+  const organizerRoute = eventID === 'organizer' || eventID.startsWith('organizer/');
+  const sessionExpired = useCallback(() => { select(null); setSession(null); }, []);
 
   useEffect(() => {
     const change = () => { setEventID(location.hash.slice(1).toLowerCase()); select(null); };
@@ -48,6 +52,10 @@ export function App() {
     <header className="masthead">
       <a className="wordmark" href="#" aria-label="Ticker, all events">ticker<span aria-hidden="true">.</span></a>
       <div className="account">
+        <nav className="app-nav" aria-label="Main navigation">
+          <a href="#" aria-current={!organizerRoute ? 'page' : undefined}>Events</a>
+          {!!session?.user.tenant_ids.length && !loggingOut && <a href="#organizer" aria-current={organizerRoute ? 'page' : undefined}>Organizer</a>}
+        </nav>
         {session && <span className="account-name" title={session.user.display_name}>{session.user.display_name}</span>}
         <button className="button" disabled={checking || loggingOut} onClick={() => {
           if (session) void logout(); else dialog.current?.showModal();
@@ -56,10 +64,14 @@ export function App() {
     </header>
     {accountError && <p className="error" role="alert">{accountError}</p>}
     <main className="content" id="content" tabIndex={-1}>
-      {eventID && eventID !== 'content'
+      {organizerRoute
+        ? <div className="organizer"><Organizer key={`${eventID}:${loggingOut ? 'leaving' : session?.user.id ?? 'guest'}`} route={eventID}
+          session={loggingOut ? null : session} checking={checking || loggingOut} heading={heading}
+          onLogin={() => dialog.current?.showModal()} onSessionExpired={sessionExpired} /></div>
+        : eventID && eventID !== 'content'
         ? <EventView key={`${eventID}:${loggingOut ? 'leaving' : session?.user.id ?? 'guest'}`} id={eventID} heading={heading}
           session={loggingOut ? null : session} checking={checking || loggingOut} selectedID={selectedID} select={select}
-          onLogin={() => dialog.current?.showModal()} onSessionExpired={() => { select(null); setSession(null); }} />
+          onLogin={() => dialog.current?.showModal()} onSessionExpired={sessionExpired} />
         : <EventIndex heading={heading} />}
     </main>
     <footer className="footer"><span>Ticker</span><span>Choose your seat.</span></footer>

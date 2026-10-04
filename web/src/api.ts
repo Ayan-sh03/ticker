@@ -20,8 +20,36 @@ export interface Seat {
 }
 
 export interface Session {
-  user: { id: string; email: string; display_name: string };
+  user: { id: string; email: string; display_name: string; tenant_ids: string[] };
   expires_at: string;
+}
+
+export interface Tenant { id: string; name: string }
+
+export interface OrganizerEvent extends Event {
+  tenant_id: string;
+  status: 'DRAFT' | 'PUBLISHED';
+  sales_open_at: string;
+  layout_rows: number;
+  layout_columns: number;
+  version: number;
+  price_layout_editable: boolean;
+}
+
+export interface DraftEventInput {
+  title: string;
+  description: string;
+  venue_name: string;
+  price_minor: number;
+  currency: string;
+  sales_open_at: string;
+  starts_at: string;
+  layout_rows: number;
+  layout_columns: number;
+}
+
+export interface UpdateEventInput extends DraftEventInput {
+  expected_version: number;
 }
 
 export interface Reservation {
@@ -32,6 +60,8 @@ export interface Reservation {
   expires_at: string;
   server_time: string;
   booking_id?: string;
+  price_minor?: number;
+  currency?: string;
 }
 
 export interface Booking {

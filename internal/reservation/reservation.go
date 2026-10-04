@@ -25,6 +25,8 @@ type Reservation struct {
 	ExpiresAt  time.Time `json:"expires_at"`
 	ServerTime time.Time `json:"server_time"`
 	BookingID  *string   `json:"booking_id,omitempty"`
+	PriceMinor int64     `json:"price_minor"`
+	Currency   string    `json:"currency"`
 }
 
 // Result preserves the original response, including its timestamp, on replay.
@@ -101,6 +103,12 @@ func (s *Store) Reserve(ctx context.Context, userID, key, eventID, seatID string
 				}
 				if _, err := tx.Exec(ctx, `INSERT INTO reservation_seats (reservation_id, tenant_id, event_id, seat_id)
 					VALUES ($1, $2, $3, $4)`, reservation.ID, tenantID, eventID, seatID); err != nil {
+					return Result{}, err
+				}
+				// The reservation's event lock prevents a price edit before this quote;
+				// reservation history freezes these terms after the transaction commits.
+				if err := tx.QueryRow(ctx, `SELECT price_minor, currency FROM events WHERE tenant_id = $1 AND id = $2`,
+					tenantID, eventID).Scan(&reservation.PriceMinor, &reservation.Currency); err != nil {
 					return Result{}, err
 				}
 				result = success(201, reservation)
@@ -234,7 +242,8 @@ func release(ctx context.Context, tx pgx.Tx, id, status string) error {
 func scan(row pgx.Row) (Reservation, error) {
 	var reservation Reservation
 	err := row.Scan(&reservation.ID, &reservation.EventID, &reservation.SeatID, &reservation.Status,
-		&reservation.CreatedAt, &reservation.ExpiresAt, &reservation.ServerTime, &reservation.BookingID)
+		&reservation.CreatedAt, &reservation.ExpiresAt, &reservation.ServerTime, &reservation.BookingID,
+		&reservation.PriceMinor, &reservation.Currency)
 	return reservation, err
 }
 

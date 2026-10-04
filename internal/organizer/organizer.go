@@ -14,15 +14,26 @@ import (
 )
 
 var (
-	ErrForbidden    = errors.New("organizer membership required")
-	ErrNotFound     = errors.New("event not found")
-	ErrInvalidEvent = errors.New("invalid event details")
-	ErrLayoutExists = errors.New("draft already has seats")
+	ErrForbidden       = errors.New("organizer membership required")
+	ErrNotFound        = errors.New("event not found")
+	ErrInvalidEvent    = errors.New("invalid event details")
+	ErrLayoutExists    = errors.New("draft already has seats")
+	ErrVersionConflict = errors.New("event changed since it was loaded")
+	ErrFrozenLayout    = errors.New("event prices and layout are locked after the first reservation")
+	ErrLayoutConflict  = errors.New("layout change conflicts with existing seats")
+	ErrHasReservations = errors.New("event has reservation history")
 )
 
 type Event struct {
 	catalog.Event
-	Status string `json:"status"`
+	Status              string `json:"status"`
+	Version             int64  `json:"version"`
+	PriceLayoutEditable bool   `json:"price_layout_editable"`
+}
+
+type Tenant struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type DraftInput struct {
@@ -37,14 +48,42 @@ type DraftInput struct {
 	LayoutColumns int       `json:"layout_columns"`
 }
 
+type EditInput struct {
+	DraftInput
+	ExpectedVersion *int64 `json:"expected_version"`
+}
+
+type DeleteInput struct {
+	ExpectedVersion *int64 `json:"expected_version"`
+}
+
 type Store struct {
 	pool *pgxpool.Pool
 }
 
 func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
+func (s *Store) ListTenants(ctx context.Context, userID string) ([]Tenant, error) {
+	rows, err := s.pool.Query(ctx, `SELECT t.id::text, t.name FROM tenants t
+		JOIN memberships m ON m.tenant_id = t.id WHERE m.user_id = $1 ORDER BY t.name, t.id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	tenants := make([]Tenant, 0)
+	for rows.Next() {
+		var tenant Tenant
+		if err := rows.Scan(&tenant.ID, &tenant.Name); err != nil {
+			return nil, err
+		}
+		tenants = append(tenants, tenant)
+	}
+	return tenants, rows.Err()
+}
+
 const eventColumns = `id::text, tenant_id::text, title, description, venue_name,
-	price_minor, currency, sales_open_at, starts_at, layout_rows, layout_columns, status`
+	price_minor, currency, sales_open_at, starts_at, layout_rows, layout_columns, status, version,
+	NOT EXISTS (SELECT 1 FROM reservations WHERE reservations.event_id = events.id)`
 
 func (s *Store) CreateEvent(ctx context.Context, userID, tenantID string, input DraftInput) (Event, error) {
 	tx, err := s.beginAuthorized(ctx, userID, tenantID)
@@ -175,7 +214,8 @@ func validateEvent(event Event, now time.Time) error {
 func scanEvent(row pgx.Row) (Event, error) {
 	var event Event
 	err := row.Scan(&event.ID, &event.TenantID, &event.Title, &event.Description, &event.VenueName,
-		&event.PriceMinor, &event.Currency, &event.SalesOpenAt, &event.StartsAt, &event.LayoutRows, &event.LayoutColumns, &event.Status)
+		&event.PriceMinor, &event.Currency, &event.SalesOpenAt, &event.StartsAt, &event.LayoutRows, &event.LayoutColumns, &event.Status,
+		&event.Version, &event.PriceLayoutEditable)
 	event.SalesOpenAt = event.SalesOpenAt.UTC()
 	event.StartsAt = event.StartsAt.UTC()
 	return event, err

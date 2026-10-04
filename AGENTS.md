@@ -2,13 +2,14 @@
 
 ## Current scope
 
-- Current authorized scope: infrastructure, catalog schema and read-only APIs, deterministic demo seed, seeded-account cookie sessions, single-seat reservations, booking confirmation with owner-only receipts, the initial customer UI, and tenant-scoped organizer draft and publication APIs.
-- The initial domain tables are users, tenants, memberships, events, and seats. Enforce tenant/event relationships and freeze published prices/layouts.
+- Current authorized scope: infrastructure, catalog schema and read-only APIs, deterministic demo seed, seeded-account cookie sessions, single-seat reservations, booking confirmation with owner-only receipts, the customer UI, and tenant-scoped organizer create, read, edit, publish, and delete APIs and UI.
+- The initial domain tables are users, tenants, memberships, events, and seats. Enforce tenant/event relationships. Published prices, currency, and layouts remain editable until the first reservation, then stay frozen even after that reservation expires or is cancelled.
 - The customer reservation UI is reviewed and committed. Preserve its design and behavior.
-- The current backend batch adds organizer membership checks, draft event creation/list/detail, and atomic publication with rectangular seat generation. Drafts stay private; published prices and layouts remain frozen. Implement draft and publication work in parallel, validate the integrated flow manually, and leave it uncommitted for review. Organizer UI belongs to a later batch.
+- Organizer draft and publication APIs are reviewed and committed. Drafts stay private. Organizers may edit title, description, venue, and dates on their events; changed start dates must be in the future and sales must open before the start. Events may be deleted only while they have no reservation history. Protect edits and deletion against stale versions.
+- The current batch adds organizer event editing and deletion to the existing create-and-publish UI, with version checks and the first-reservation policy enforced by the API and database. Use Sol subagents, preserve visual uniformity with the customer UI, keep interactions snappy, validate manually, and leave changes uncommitted for review.
 - Protected UI requests assert their expected account with `X-Ticker-User`; the API must reject a mismatch with the cookie owner before any mutation or private read.
 - Use Hallmark for the UI. Do not use other skills unless the user asks later. Keep the design minimal and interactions snappy.
-- Do not implement confirmed-booking cancellation, multi-seat acquisition, organizer writes beyond draft creation and publication, public signup, password recovery, or payment integration until the user expands the scope.
+- Do not implement confirmed-booking cancellation, multi-seat acquisition, organizer writes beyond event creation, editing, publication, and deletion, public signup, password recovery, or payment integration until the user expands the scope.
 - The worker processes reservation expiration only.
 
 ## Work batch size

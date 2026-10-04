@@ -15,6 +15,10 @@ export function EventView({ id, heading, session, checking, selectedID, select, 
   const [list, setList] = useState(false);
   const [lostSelection, setLostSelection] = useState(false);
   const hold = useReservation(id, session?.user.id, onSessionExpired);
+  // Older replay responses may lack a quote; the fresh hold read supplies it
+  // before confirmation becomes available.
+  const heldQuote = hold.reservation?.price_minor !== undefined && hold.reservation.currency
+    ? { price_minor: hold.reservation.price_minor, currency: hold.reservation.currency } : undefined;
   const ownedID = hold.booking?.seat_id ?? hold.reservation?.seat_id ?? (hold.pending?.kind === 'reserve' ? hold.pending.seatID : undefined);
   const ownedSeat = inventory.data?.seats.find(seat => seat.id === ownedID);
   const occupied = !!hold.pending || hold.hasRecord;
@@ -58,7 +62,7 @@ export function EventView({ id, heading, session, checking, selectedID, select, 
           </>}
         </section>
         <aside className="selection" aria-labelledby="selection-heading"><h2 id="selection-heading">Your selection</h2>
-          <p className="price">{price(event.data.event)}<small>per seat</small></p>
+          <p className="price">{price(hold.booking ?? heldQuote ?? event.data.event)}<small>per seat</small></p>
           <div className="selection-detail">
             {hold.error && <ErrorMessage message={hold.error} retry={hold.ready ? hold.retry : undefined} />}
             {hold.busy && <p role="status">{hold.pending?.kind === 'reserve' ? 'Reserving…' : hold.pending?.kind === 'confirm' ? 'Confirming…' : hold.pending?.kind === 'cancel' ? 'Cancelling…' : 'Checking reservation…'}</p>}
