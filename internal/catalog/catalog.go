@@ -37,11 +37,12 @@ type Seat struct {
 }
 
 type Store struct {
-	pool *pgxpool.Pool
+	pool  *pgxpool.Pool
+	seats *seatCache
 }
 
 func NewStore(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool}
+	return &Store{pool: pool, seats: newSeatCache()}
 }
 
 func (s *Store) ListEvents(ctx context.Context, limit, offset int) ([]Event, error) {
@@ -70,6 +71,12 @@ func (s *Store) GetEvent(ctx context.Context, id string) (Event, error) {
 }
 
 func (s *Store) ListSeats(ctx context.Context, eventID string) ([]Seat, error) {
+	return s.seats.get(ctx, eventID, func(ctx context.Context) ([]Seat, error) {
+		return s.listSeats(ctx, eventID)
+	})
+}
+
+func (s *Store) listSeats(ctx context.Context, eventID string) ([]Seat, error) {
 	rows, err := s.pool.Query(ctx, queries.ListEventSeats, eventID)
 	if err != nil {
 		return nil, err

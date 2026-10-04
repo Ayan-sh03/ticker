@@ -73,13 +73,15 @@ func (h *Handler) listSeats(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	if _, err := h.store.GetEvent(ctx, id); err != nil {
-		h.storeError(w, r, err)
-		return
-	}
 	seats, err := h.store.ListSeats(ctx, id)
 	if err != nil {
 		h.storeError(w, r, err)
+		return
+	}
+	// Published events always have seats, so an empty snapshot means the event
+	// is missing or unpublished; this replaces a separate existence lookup.
+	if len(seats) == 0 {
+		h.storeError(w, r, ErrNotFound)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
