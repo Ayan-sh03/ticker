@@ -3,7 +3,34 @@ import { date, price, useResource, type Event, type Seat, type Session } from '.
 import { ErrorMessage } from './Feedback';
 import { useReservation } from './useReservation';
 
-const statuses = { AVAILABLE: 'Available', HELD: 'Held', SOLD: 'Sold', BLOCKED: 'Blocked' };
+const statuses = { AVAILABLE: 'Available', HELD: 'Held', SOLD: 'Booked', BLOCKED: 'Blocked' };
+// Percentage of bookable seats remaining; blocked seats do not add capacity.
+const availabilityThresholds = { fewPercent: 10, limitedPercent: 25 };
+
+function SeatAvailability({ seats, stale }: { seats: Seat[]; stale: boolean }) {
+  const counts = { AVAILABLE: 0, HELD: 0, SOLD: 0, BLOCKED: 0 };
+  for (const seat of seats) counts[seat.status]++;
+  if (!seats.length) return <p className="availability-empty" role="status">{stale ? 'No seats were listed at the last refresh.' : 'No seats are listed for this event.'}</p>;
+  const capacity = counts.AVAILABLE + counts.HELD + counts.SOLD;
+  const remainingPercent = capacity ? counts.AVAILABLE / capacity * 100 : 0;
+  let label = 'Seats available';
+  let level = 'good';
+  if (stale) { label = 'Last known availability'; level = 'neutral'; }
+  else if (!counts.AVAILABLE) {
+    label = counts.HELD ? 'Temporarily unavailable' : capacity && counts.SOLD === capacity ? 'Sold out' : 'No seats available';
+    level = label === 'Sold out' ? 'low' : 'neutral';
+  } else if (remainingPercent <= availabilityThresholds.fewPercent) { label = 'Few seats left'; level = 'low'; }
+  else if (remainingPercent <= availabilityThresholds.limitedPercent) { label = 'Limited availability'; level = 'limited'; }
+  const detail = [
+    { count: counts.HELD, label: 'held' },
+    { count: counts.SOLD, label: 'booked' },
+    { count: counts.BLOCKED, label: 'blocked' },
+  ].filter(item => item.count).map(item => `${item.count} ${item.label}`).join(' · ');
+  return <div className="availability-summary" role="status" aria-atomic="true">
+    <div className="availability-heading"><p className="remaining-count"><strong>{counts.AVAILABLE}</strong> {counts.AVAILABLE === 1 ? 'seat' : 'seats'} remaining</p><span className="availability-label" data-level={level}>{label}</span></div>
+    {detail && <p className="availability-detail">{detail}</p>}
+  </div>;
+}
 
 export function EventView({ id, heading, session, checking, selectedID, select, onLogin, onSessionExpired }: {
   id: string; heading: RefObject<HTMLHeadingElement | null>; session: Session | null;
@@ -43,19 +70,19 @@ export function EventView({ id, heading, session, checking, selectedID, select, 
       <div className="event-layout">
         <section className="seat-panel" aria-labelledby="seat-heading">
           <div className="section-heading"><div><h2 id="seat-heading">Choose a seat</h2><p>{occupied ? 'Your reservation appears in your selection.' : selected ? `Seat ${selected.label} selected.` : 'Select one available seat.'}</p></div><button className="button" aria-pressed={list} onClick={() => setList(value => !value)}>{list ? 'Seat map' : 'Seat list'}</button></div>
-          <ul className="legend" aria-label="Seat availability"><li><span className="legend-mark" />Available</li><li><span className="legend-mark selected-mark">✓</span>Selected</li><li><span className="legend-mark unavailable-mark">×</span>Unavailable</li></ul>
+          {inventory.data && <SeatAvailability seats={inventory.data.seats} stale={!!inventory.error} />}
+          <ul className="legend" aria-label="Seat availability"><li><span className="legend-mark" aria-hidden="true" />Available</li><li><span className="legend-mark selected-mark" aria-hidden="true">✓</span>Selected</li><li><span className="legend-mark held-mark" aria-hidden="true">–</span>Held</li><li><span className="legend-mark booked-mark" aria-hidden="true">✓</span>Booked</li><li><span className="legend-mark blocked-mark" aria-hidden="true">×</span>Blocked</li></ul>
           {inventory.error && <ErrorMessage message="Availability could not refresh. Retry before selecting a seat." retry={inventory.retry} />}
           {!inventory.data && !inventory.error && <p className="loading" role="status">Loading seats…</p>}
           {inventory.data && <>
-            {inventory.data.seats.length === 0 && <p>No seats are listed for this event.</p>}
-            {!list && <div className="stage">Stage</div>}
+            {!list && inventory.data.seats.length > 0 && <div className="stage">Stage</div>}
             {[...groups].map(([group, seats]) => <div className="seat-group" key={group}>
               <h3>{group}</h3><ul className={list ? 'seat-list' : 'seat-grid'}>{seats.map(seat => {
                 const unavailable = seat.status !== 'AVAILABLE';
                 const yours = seat.id === ownedID && (hold.reservation?.status === 'HELD' || !!hold.booking || !!hold.pending);
                 const chosen = !occupied && seat.id === selected?.id;
-                return <li key={seat.id}><button className={`seat ${list ? 'seat-line' : ''} ${yours ? 'seat-owned' : ''}`} disabled={unavailable || !!inventory.error || occupied} aria-pressed={chosen || yours} aria-label={`${seat.label}, ${yours ? hold.booking ? 'your confirmed seat' : 'your reservation' : statuses[seat.status]}${chosen ? ', selected' : ''}`} onClick={() => { select(chosen ? null : seat.id); setLostSelection(false); }}>
-                  <span>{seat.label}</span><span className="seat-state">{yours ? list ? 'Yours' : '✓' : list ? statuses[seat.status] : chosen ? '✓' : unavailable ? '×' : ''}</span>
+                return <li key={seat.id}><button className={`seat ${list ? 'seat-line' : ''} ${yours ? 'seat-owned' : ''}`} data-seat-status={seat.status} disabled={unavailable || !!inventory.error || occupied} aria-pressed={chosen || yours} aria-label={`${seat.label}, ${yours ? hold.booking ? 'your confirmed seat' : 'your reservation' : statuses[seat.status]}${chosen ? ', selected' : ''}`} onClick={() => { select(chosen ? null : seat.id); setLostSelection(false); }}>
+                  <span>{seat.label}</span><span className="seat-state" aria-hidden="true">{yours ? list ? 'Yours' : '✓' : list || unavailable ? statuses[seat.status] : chosen ? '✓' : ''}</span>
                 </button></li>;
               })}</ul>
             </div>)}

@@ -20,6 +20,9 @@
   --color-accent-ink: var(--color-ink);
   --color-focus: oklch(46% 0.13 28);
   --color-error: oklch(43% 0.15 28);
+  --color-availability-good: oklch(42% 0.09 155);
+  --color-availability-limited: oklch(45% 0.09 80);
+  --color-availability-low: var(--color-error);
   --space-xs: 0.25rem;
   --space-sm: 0.5rem;
   --space-md: 0.75rem;

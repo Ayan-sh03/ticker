@@ -45,11 +45,24 @@ main.content { flex: 1; max-width: none; margin: 0; padding: var(--space-2xl) 0 
 .seat-panel { min-width: 0; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-lg); }
 .section-heading p { font-size: var(--text-sm); margin-top: var(--space-xs); }
+.availability-summary, .availability-empty { margin-top: var(--space-xl); }
+.availability-heading { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-sm) var(--space-xl); }
+.remaining-count { color: var(--color-ink); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.remaining-count strong { font-weight: 600; }
+.availability-label { display: inline-flex; align-items: center; gap: var(--space-sm); color: var(--color-muted); font-size: var(--text-sm); }
+.availability-label::before { content: ''; width: 0.5rem; height: 0.5rem; flex-shrink: 0; border-radius: var(--radius-pill); background: currentColor; }
+.availability-label[data-level='good'] { color: var(--color-availability-good); }
+.availability-label[data-level='limited'] { color: var(--color-availability-limited); }
+.availability-label[data-level='low'] { color: var(--color-availability-low); }
+.availability-detail, .availability-empty { font-size: var(--text-sm); }
+.availability-detail { margin-top: var(--space-xs); font-variant-numeric: tabular-nums; }
 .legend { display: flex; flex-wrap: wrap; gap: var(--space-md) var(--space-xl); margin-block: var(--space-xl); font-size: var(--text-sm); color: var(--color-muted); }
 .legend li { display: inline-flex; align-items: center; gap: var(--space-sm); }
 .legend-mark { width: 1rem; height: 1rem; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--color-control); border-radius: var(--space-xs); font-size: 0.75rem; }
 .selected-mark { background: var(--color-accent); color: var(--color-accent-ink); border-color: var(--color-ink); }
-.unavailable-mark { background: var(--color-paper-2); color: var(--color-muted); border-style: dashed; }
+.held-mark { background: var(--color-paper-2); color: var(--color-availability-limited); border-color: currentColor; border-style: dashed; }
+.booked-mark { background: var(--color-paper-2); color: var(--color-muted); }
+.blocked-mark { background: var(--color-paper-2); color: var(--color-muted); border-style: dotted; }
 .stage { text-align: center; margin-block: var(--space-xl); padding-block: var(--space-sm); border-top: 2px solid var(--color-control); color: var(--color-muted); font-size: var(--text-sm); }
 .seat-group + .seat-group { margin-top: var(--space-lg); }
 .seat-group h3 { margin-bottom: var(--space-md); color: var(--color-muted); }
@@ -57,7 +70,12 @@ main.content { flex: 1; max-width: none; margin: 0; padding: var(--space-2xl) 0 
 .seat { width: 100%; min-height: 48px; padding: var(--space-xs); border: 1px solid var(--color-control); border-radius: var(--radius-input); color: var(--color-ink); background: transparent; font-size: var(--text-sm); font-variant-numeric: tabular-nums; white-space: nowrap; transition: transform var(--dur-micro) var(--ease-out); }
 .seat[aria-pressed='true'] { background: var(--color-accent); color: var(--color-accent-ink); border: 2px solid var(--color-ink); }
 .seat:disabled { background: var(--color-paper-2); color: var(--color-muted); border-style: dashed; }
+.seat[data-seat-status='HELD']:disabled { border-color: var(--color-availability-limited); }
+.seat[data-seat-status='SOLD']:disabled { border-style: solid; }
+.seat[data-seat-status='BLOCKED']:disabled { border-style: dotted; }
 .seat-state:not(:empty) { margin-inline-start: var(--space-xs); }
+.seat-grid .seat { min-width: 0; min-height: 54px; }
+.seat-grid .seat:disabled:not(.seat-owned) .seat-state:not(:empty) { display: block; margin: 0; font-size: 0.75rem; line-height: 1.2; }
 .seat-list { display: grid; gap: var(--space-sm); }
 .seat-line { display: flex; justify-content: space-between; align-items: center; padding-inline: var(--space-lg); }
 .selection { border-top: 1px solid var(--color-rule); padding-top: var(--space-xl); }
