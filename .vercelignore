@@ -1,0 +1,11 @@
+# Upload only what the Vercel build needs; Docker Compose deploys use the full tree.
+/*
+!/vercel.json
+!/go.mod
+!/go.sum
+!/cmd
+!/internal
+!/db
+!/web
+/web/node_modules
+/web/dist
