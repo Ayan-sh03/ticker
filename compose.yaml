@@ -10,6 +10,11 @@ x-backend: &backend
     PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8080}
     COOKIE_SECURE: ${COOKIE_SECURE:-false}
     DB_MAX_CONNS: ${API_DB_MAX_CONNS:-12}
+    REDIS_URL: redis://redis:6379/0
+    RATE_LIMITS_ENABLED: ${RATE_LIMITS_ENABLED:-true}
+    RATE_LIMIT_SECRET: ${RATE_LIMIT_SECRET:-dev-only-rate-limit-secret-0123456789}
+    # nginx at the edge overwrites X-Real-IP with the client address.
+    CLIENT_IP_HEADER: X-Real-IP
   depends_on:
     db:
       condition: service_healthy
@@ -33,12 +38,28 @@ services:
       retries: 10
       start_period: 10s
 
+  # Rate-limit counters only. They expire within minutes, so nothing is persisted.
+  redis:
+    image: redis:8.0-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "volatile-ttl"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   api:
     <<: *backend
     build:
       context: .
       args:
         APP: api
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/readyz"]
       interval: 5s
