@@ -7,7 +7,9 @@
 - The customer reservation UI is reviewed and committed. Preserve its design and behavior.
 - Organizer draft and publication APIs are reviewed and committed. Drafts stay private. Organizers may edit title, description, venue, and dates on their events; changed start dates must be in the future and sales must open before the start. Events may be deleted only while they have no reservation history. Protect edits and deletion against stale versions.
 - Organizer event editing and deletion are reviewed and committed.
-- The current batch (Milestone 3 core) makes `POST /reservations` accept 1–6 distinct seat IDs and hold all of them or none. Lock seats in ascending ID order, hash the sorted seat set for idempotency, and have the database reject a hold whose seat count differs from its quantity. Every reservation transition (held, confirmed, cancelled, expired) writes an `audit_entries` row with actor, transition, reason, and request key in the same transaction. The customer UI keeps its single-seat behavior and only adapts to the new payload shape. Validate manually and open a pull request for review.
+- Multi-seat reservations (1–6 seats, sorted lock order, audit trail) and serverless hosting are reviewed and merged.
+- The current batch adds rate limiting and lock-timeout retries. Limit by signed device cookie, then by a browser fingerprint (address plus browser headers), with only a high per-network flood ceiling, so offices behind one address are not blocked. Limit reserve and confirm per account too. Count logins and writes in Redis so all API instances share one budget; count reads in process memory. If Redis fails, fall back to memory limits; never fail closed. Return 429 with `Retry-After` before any database work; a rate-limited request was not processed, so clients retry with the same idempotency key. Retry lock timeouts and deadlocks a few times inside the API before returning 503 with `Retry-After`. Validate manually and open a pull request for review.
+- Two deployments are supported: Docker Compose (nginx, API, worker, PostgreSQL, Redis) and Vercel with Neon PostgreSQL and Upstash Redis, where overdue holds are released on demand instead of by the worker.
 - Work in a learning-first loop: before implementing a milestone, ask the user short concept questions about it, discuss the answers, then implement.
 - Protected UI requests assert their expected account with `X-Ticker-User`; the API must reject a mismatch with the cookie owner before any mutation or private read.
 - Use Hallmark for the UI. Do not use other skills unless the user asks later. Keep the design minimal and interactions snappy.
@@ -34,7 +36,7 @@
 - Keep AGENTS.md as the only tracked Markdown file for now. PLAN.md must remain local and gitignored.
 - Do not create README.md or other project-owned Markdown documentation yet; the user wants the README added at the end.
 - Use .gitkeep files to preserve empty scaffold directories.
-- Use Go net/http and pgx, React/TypeScript/Vite, and PostgreSQL. Do not add Redis, brokers, or microservices.
+- Use Go net/http and pgx, React/TypeScript/Vite, and PostgreSQL. Redis is allowed for rate limiting only; do not use it for locks, caching, or queues. Do not add brokers or microservices.
 - Keep API and worker as separate processes sharing one Go module.
 - Keep credentials in local environment files; commit only example development configuration.
 - Keep PowerShell scripts usable from the repository root on Windows.
