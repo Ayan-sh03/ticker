@@ -10,10 +10,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"ticker/internal/identity"
 	"ticker/internal/platform/config"
 	"ticker/internal/platform/database"
 	"ticker/internal/platform/httpserver"
+	"ticker/internal/platform/ratelimit"
 )
 
 func main() {
@@ -36,9 +39,14 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	defer pool.Close()
+	limiter, closeLimiter, err := newLimiter(ctx, cfg, logger)
+	if err != nil {
+		return err
+	}
+	defer closeLimiter()
 	router, err := httpserver.Router(pool, logger, identity.Options{
 		PublicOrigin: cfg.PublicOrigin, CookieSecure: cfg.CookieSecure,
-	}, cfg.Metrics)
+	}, cfg.Metrics, limiter)
 	if err != nil {
 		return err
 	}
@@ -74,4 +82,41 @@ func run(logger *slog.Logger) error {
 		}
 		return nil
 	}
+}
+
+// newLimiter returns nil when limits are disabled, for example during benchmarks.
+// An unreachable Redis is logged, not fatal: shared limits then fall back to memory.
+func newLimiter(ctx context.Context, cfg config.Config, logger *slog.Logger) (*ratelimit.Limiter, func(), error) {
+	if !cfg.RateLimits {
+		logger.Warn("rate limits disabled")
+		return nil, func() {}, nil
+	}
+	if len(cfg.RateLimitSecret) < 32 {
+		return nil, nil, errors.New("RATE_LIMIT_SECRET must be at least 32 characters when rate limits are enabled")
+	}
+	var client *redis.Client
+	if cfg.RedisURL != "" {
+		options, err := redis.ParseURL(cfg.RedisURL)
+		if err != nil {
+			return nil, nil, errors.New("REDIS_URL is not a valid Redis URL")
+		}
+		options.PoolSize = 4
+		options.DialTimeout = time.Second
+		options.ReadTimeout = 150 * time.Millisecond
+		options.WriteTimeout = 150 * time.Millisecond
+		client = redis.NewClient(options)
+		pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		if err := client.Ping(pingCtx).Err(); err != nil {
+			logger.Warn("redis unreachable; shared rate limits will use memory until it recovers", "error", err)
+		}
+	} else {
+		logger.Warn("REDIS_URL not set; rate limits are per process")
+	}
+	limiter := ratelimit.New(client, []byte(cfg.RateLimitSecret), cfg.ClientIPHeader, cfg.CookieSecure, logger)
+	return limiter, func() {
+		if client != nil {
+			_ = client.Close()
+		}
+	}, nil
 }

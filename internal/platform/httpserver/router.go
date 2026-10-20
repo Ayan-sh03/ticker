@@ -14,10 +14,12 @@ import (
 	"ticker/internal/catalog"
 	"ticker/internal/identity"
 	"ticker/internal/organizer"
+	"ticker/internal/platform/ratelimit"
 	"ticker/internal/reservation"
 )
 
-func Router(pool *pgxpool.Pool, logger *slog.Logger, options identity.Options, metrics bool) (http.Handler, error) {
+// Router limits requests before any handler touches PostgreSQL. A nil limiter disables limits.
+func Router(pool *pgxpool.Pool, logger *slog.Logger, options identity.Options, metrics bool, limiter *ratelimit.Limiter) (http.Handler, error) {
 	sessions, err := identity.NewService(pool)
 	if err != nil {
 		return nil, err
@@ -41,9 +43,9 @@ func Router(pool *pgxpool.Pool, logger *slog.Logger, options identity.Options, m
 	catalog.RegisterRoutes(mux, catalog.NewStore(pool), logger)
 	identityHandler := identity.RegisterRoutes(mux, sessions, logger, options)
 	organizer.RegisterRoutes(mux, organizer.NewStore(pool), identityHandler, logger)
-	reservation.RegisterRoutes(mux, reservation.NewStore(pool), identityHandler, logger)
+	reservation.RegisterRoutes(mux, reservation.NewStore(pool), identityHandler, limiter, logger)
 	booking.RegisterRoutes(mux, booking.NewStore(pool), identityHandler, logger)
-	return mux, nil
+	return limiter.Middleware(mux), nil
 }
 
 func respond(w http.ResponseWriter, status int, message string) {
