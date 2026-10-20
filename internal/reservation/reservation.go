@@ -70,8 +70,8 @@ func (s *Store) Reserve(ctx context.Context, userID, key, eventID string, seatID
 	if status != nil {
 		return Result{Status: *status, Body: body}, nil
 	}
-	// Lock order: request key, new reservation, seats by ascending ID. No existing
-	// reservation is locked while acquiring seats; cancellation/expiration lock reservation first.
+	// Lock order: request key, new reservation, overdue reservations by ascending ID,
+	// seats by ascending ID. Like cancellation and expiration, reservations come before seats.
 	var reservation Reservation
 	var tenantID string
 	err = tx.QueryRow(ctx, `INSERT INTO reservations (tenant_id, event_id, user_id, quantity, expires_at)
@@ -84,6 +84,9 @@ func (s *Store) Reserve(ctx context.Context, userID, key, eventID string, seatID
 		return Result{}, err
 	}
 	if err == nil {
+		if err := releaseOverdue(ctx, tx, seatIDs); err != nil {
+			return Result{}, err
+		}
 		if result, err = allocate(ctx, tx, &reservation, tenantID, userID, key, seatIDs); err != nil {
 			return Result{}, err
 		}
@@ -99,6 +102,30 @@ func (s *Store) Reserve(ctx context.Context, userID, key, eventID string, seatID
 	}
 	// A lost commit response is recovered by retrying with this same request key.
 	return result, tx.Commit(ctx)
+}
+
+// releaseOverdue frees expired holds on the requested seats, so expiry does not
+// depend on a running worker. A row changed while waiting for its lock is rechecked
+// by PostgreSQL, so a hold confirmed or cancelled meanwhile is skipped.
+func releaseOverdue(ctx context.Context, tx pgx.Tx, seatIDs []string) error {
+	rows, err := tx.Query(ctx, `SELECT r.id::text FROM reservations r
+		WHERE r.status = 'HELD' AND r.expires_at <= clock_timestamp() AND EXISTS (
+			SELECT 1 FROM reservation_seats rs WHERE rs.reservation_id = r.id
+			AND rs.seat_id = ANY($1::uuid[]) AND rs.released_at IS NULL)
+		ORDER BY r.id FOR UPDATE OF r`, seatIDs)
+	if err != nil {
+		return err
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := release(ctx, tx, id, "EXPIRED", "", "deadline_passed"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // allocate locks every requested seat before deciding, then assigns all of them or none.
@@ -249,7 +276,8 @@ func lockSeats(ctx context.Context, tx pgx.Tx, id string) error {
 	return rows.Err()
 }
 
-// release frees every seat of a held reservation. An empty actor means the worker.
+// release frees every seat of a held reservation. An empty actor means the system:
+// the worker or an on-demand release during another reservation.
 func release(ctx context.Context, tx pgx.Tx, id, status, actor, reason string) error {
 	if _, err := tx.Exec(ctx, "UPDATE reservation_seats SET released_at = clock_timestamp() WHERE reservation_id = $1 AND released_at IS NULL", id); err != nil {
 		return err
