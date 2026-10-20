@@ -38,9 +38,12 @@ func run(logger *slog.Logger) error {
 	defer pool.Close()
 	router, err := httpserver.Router(pool, logger, identity.Options{
 		PublicOrigin: cfg.PublicOrigin, CookieSecure: cfg.CookieSecure,
-	})
+	}, cfg.Metrics)
 	if err != nil {
 		return err
+	}
+	if cfg.BasePath != "" {
+		router = http.StripPrefix(cfg.BasePath, router)
 	}
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,

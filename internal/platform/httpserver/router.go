@@ -17,7 +17,7 @@ import (
 	"ticker/internal/reservation"
 )
 
-func Router(pool *pgxpool.Pool, logger *slog.Logger, options identity.Options) (http.Handler, error) {
+func Router(pool *pgxpool.Pool, logger *slog.Logger, options identity.Options, metrics bool) (http.Handler, error) {
 	sessions, err := identity.NewService(pool)
 	if err != nil {
 		return nil, err
@@ -35,7 +35,9 @@ func Router(pool *pgxpool.Pool, logger *slog.Logger, options identity.Options) (
 		}
 		respond(w, http.StatusOK, "ready")
 	})
-	mux.Handle("GET /metrics", promhttp.Handler())
+	if metrics {
+		mux.Handle("GET /metrics", promhttp.Handler())
+	}
 	catalog.RegisterRoutes(mux, catalog.NewStore(pool), logger)
 	identityHandler := identity.RegisterRoutes(mux, sessions, logger, options)
 	organizer.RegisterRoutes(mux, organizer.NewStore(pool), identityHandler, logger)

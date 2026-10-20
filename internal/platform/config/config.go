@@ -14,6 +14,10 @@ type Config struct {
 	DBMaxConns   int32
 	PublicOrigin string
 	CookieSecure bool
+	// BasePath is stripped from request paths when a host forwards /api unchanged.
+	BasePath string
+	// Metrics exposes /metrics; serverless hosts cannot be scraped, so they disable it.
+	Metrics bool
 }
 
 func Load() (Config, error) {
@@ -22,9 +26,13 @@ func Load() (Config, error) {
 		DatabaseURL:  os.Getenv("DATABASE_URL"),
 		DBMaxConns:   12,
 		PublicOrigin: "http://localhost:8080",
+		Metrics:      true,
 	}
+	// Serverless hosts such as Vercel assign the port through PORT.
 	if addr := os.Getenv("HTTP_ADDR"); addr != "" {
 		cfg.HTTPAddr = addr
+	} else if port := os.Getenv("PORT"); port != "" {
+		cfg.HTTPAddr = ":" + port
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL is required")
@@ -50,6 +58,15 @@ func Load() (Config, error) {
 		if err != nil {
 			return Config{}, errors.New("COOKIE_SECURE must be true or false")
 		}
+	}
+	if raw := os.Getenv("METRICS_ENABLED"); raw != "" {
+		if cfg.Metrics, err = strconv.ParseBool(raw); err != nil {
+			return Config{}, errors.New("METRICS_ENABLED must be true or false")
+		}
+	}
+	cfg.BasePath = strings.TrimSuffix(os.Getenv("HTTP_BASE_PATH"), "/")
+	if cfg.BasePath != "" && !strings.HasPrefix(cfg.BasePath, "/") {
+		return Config{}, errors.New("HTTP_BASE_PATH must start with /")
 	}
 	if origin.Scheme == "https" && !cfg.CookieSecure {
 		return Config{}, errors.New("COOKIE_SECURE must be true for an https PUBLIC_ORIGIN")
