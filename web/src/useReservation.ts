@@ -93,7 +93,7 @@ export function useReservation(eventID: string, userID: string | undefined, onSe
       const result = await request<{ reservation: Reservation }>(operation.kind === 'reserve' ? '/reservations' : `/reservations/${operation.reservationID}`, {
         method: operation.kind === 'reserve' ? 'POST' : 'DELETE', signal,
         headers: { 'X-Ticker-User': userID!, ...(operation.kind === 'reserve' ? { 'Idempotency-Key': operation.key } : {}) },
-        ...(operation.kind === 'reserve' ? { body: JSON.stringify({ event_id: eventID, seat_id: operation.seatID }) } : {}),
+        ...(operation.kind === 'reserve' ? { body: JSON.stringify({ event_id: eventID, seat_ids: [operation.seatID] }) } : {}),
       });
       if (signal.aborted) return;
       if (!persist({ reservationID: result.reservation.id })) throw new StorageError();

@@ -55,7 +55,7 @@ export interface UpdateEventInput extends DraftEventInput {
 export interface Reservation {
   id: string;
   event_id: string;
-  seat_id: string;
+  seat_ids: string[];
   status: 'HELD' | 'CONFIRMED' | 'EXPIRED' | 'CANCELLED';
   expires_at: string;
   server_time: string;
@@ -68,7 +68,7 @@ export interface Booking {
   id: string;
   reservation_id: string;
   event_id: string;
-  seat_id: string;
+  seat_ids: string[];
   price_minor: number;
   currency: string;
   created_at: string;
