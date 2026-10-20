@@ -6,11 +6,13 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"mime"
 	"net/http"
 	"slices"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"ticker/internal/identity"
@@ -59,7 +61,7 @@ func (h *Handler) confirm(w http.ResponseWriter, r *http.Request) {
 	session, _ := identity.CurrentSession(r.Context())
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	result, err := h.store.Confirm(ctx, session.User.ID, key, id)
+	result, err := retryLocks(ctx, func() (Result, error) { return h.store.Confirm(ctx, session.User.ID, key, id) })
 	if err != nil {
 		h.storeError(w, r, err)
 		return
@@ -111,7 +113,7 @@ func (h *Handler) reserve(w http.ResponseWriter, r *http.Request) {
 	session, _ := identity.CurrentSession(r.Context())
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	result, err := h.store.Reserve(ctx, session.User.ID, key, eventID, seatIDs)
+	result, err := retryLocks(ctx, func() (Result, error) { return h.store.Reserve(ctx, session.User.ID, key, eventID, seatIDs) })
 	if err != nil {
 		h.storeError(w, r, err)
 		return
@@ -135,7 +137,7 @@ func (h *Handler) readOrCancel(w http.ResponseWriter, r *http.Request, cancelHol
 	var reservation Reservation
 	var err error
 	if cancelHold {
-		reservation, err = h.store.Cancel(ctx, session.User.ID, id)
+		reservation, err = retryLocks(ctx, func() (Reservation, error) { return h.store.Cancel(ctx, session.User.ID, id) })
 	} else {
 		reservation, err = h.store.Get(ctx, session.User.ID, id)
 	}
@@ -152,6 +154,7 @@ func (h *Handler) storeError(w http.ResponseWriter, r *http.Request, err error) 
 		return
 	}
 	h.logger.Error("reservation request failed", "path", r.URL.Path, "error", err)
+	w.Header().Set("Retry-After", "1")
 	writeResult(w, failure(503, "reservation_unavailable", "retry with the same request key; reservation service is temporarily unavailable"))
 }
 
@@ -168,4 +171,26 @@ func writeResult(w http.ResponseWriter, result Result) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(result.Status)
 	_, _ = w.Write(result.Body)
+}
+
+// retryLocks reruns a transaction that lost a lock wait or a deadlock. The whole
+// transaction rolled back, including its request-key row, so rerunning it with
+// the same key is safe. By the retry the lock holder has usually committed, so
+// the caller gets the real outcome, often a 409, instead of a 503.
+func retryLocks[T any](ctx context.Context, run func() (T, error)) (T, error) {
+	for attempt := 1; ; attempt++ {
+		value, err := run()
+		var pgErr *pgconn.PgError
+		if err == nil || attempt > 2 || !errors.As(err, &pgErr) ||
+			(pgErr.Code != "55P03" && pgErr.Code != "40P01") { // lock_not_available, deadlock_detected
+			return value, err
+		}
+		// Jitter keeps retrying contenders from colliding again in lockstep.
+		delay := time.Duration(attempt*25+rand.IntN(25)) * time.Millisecond
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return value, err
+		}
+	}
 }
