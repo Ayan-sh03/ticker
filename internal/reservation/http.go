@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"ticker/internal/identity"
+	"ticker/internal/platform/ratelimit"
 )
 
 type Handler struct {
@@ -21,12 +22,12 @@ type Handler struct {
 	logger *slog.Logger
 }
 
-func RegisterRoutes(mux *http.ServeMux, store *Store, sessions *identity.Handler, logger *slog.Logger) {
+func RegisterRoutes(mux *http.ServeMux, store *Store, sessions *identity.Handler, limiter *ratelimit.Limiter, logger *slog.Logger) {
 	h := &Handler{store: store, logger: logger}
-	mux.Handle("POST /reservations", sessions.RequireUser(http.HandlerFunc(h.reserve)))
+	mux.Handle("POST /reservations", sessions.RequireUser(limiter.Account("reserve", h.reserve)))
 	mux.Handle("GET /reservations/{reservationID}", sessions.RequireUser(http.HandlerFunc(h.get)))
 	mux.Handle("DELETE /reservations/{reservationID}", sessions.RequireUser(http.HandlerFunc(h.cancel)))
-	mux.Handle("POST /reservations/{reservationID}/confirm", sessions.RequireUser(http.HandlerFunc(h.confirm)))
+	mux.Handle("POST /reservations/{reservationID}/confirm", sessions.RequireUser(limiter.Account("confirm", h.confirm)))
 }
 
 func (h *Handler) confirm(w http.ResponseWriter, r *http.Request) {

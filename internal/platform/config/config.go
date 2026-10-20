@@ -18,6 +18,13 @@ type Config struct {
 	BasePath string
 	// Metrics exposes /metrics; serverless hosts cannot be scraped, so they disable it.
 	Metrics bool
+	// RateLimits enables request limits. RedisURL shares write limits across
+	// instances; without it, limits are counted in process memory.
+	RateLimits      bool
+	RedisURL        string
+	RateLimitSecret string
+	// ClientIPHeader names the header the deployment's own proxy sets to the client address.
+	ClientIPHeader string
 }
 
 func Load() (Config, error) {
@@ -27,6 +34,11 @@ func Load() (Config, error) {
 		DBMaxConns:   12,
 		PublicOrigin: "http://localhost:8080",
 		Metrics:      true,
+		RateLimits:   true,
+		RedisURL:     os.Getenv("REDIS_URL"),
+		// Used only to sign device cookies and hash fingerprints.
+		RateLimitSecret: os.Getenv("RATE_LIMIT_SECRET"),
+		ClientIPHeader:  os.Getenv("CLIENT_IP_HEADER"),
 	}
 	// Serverless hosts such as Vercel assign the port through PORT.
 	if addr := os.Getenv("HTTP_ADDR"); addr != "" {
@@ -62,6 +74,11 @@ func Load() (Config, error) {
 	if raw := os.Getenv("METRICS_ENABLED"); raw != "" {
 		if cfg.Metrics, err = strconv.ParseBool(raw); err != nil {
 			return Config{}, errors.New("METRICS_ENABLED must be true or false")
+		}
+	}
+	if raw := os.Getenv("RATE_LIMITS_ENABLED"); raw != "" {
+		if cfg.RateLimits, err = strconv.ParseBool(raw); err != nil {
+			return Config{}, errors.New("RATE_LIMITS_ENABLED must be true or false")
 		}
 	}
 	cfg.BasePath = strings.TrimSuffix(os.Getenv("HTTP_BASE_PATH"), "/")
