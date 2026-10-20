@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -16,16 +18,18 @@ import (
 
 var ErrNotFound = errors.New("reservation not found")
 
+// PriceMinor is per seat; TotalMinor covers every seat in the hold.
 type Reservation struct {
 	ID         string    `json:"id"`
 	EventID    string    `json:"event_id"`
-	SeatID     string    `json:"seat_id"`
+	SeatIDs    []string  `json:"seat_ids"`
 	Status     string    `json:"status"`
 	CreatedAt  time.Time `json:"created_at"`
 	ExpiresAt  time.Time `json:"expires_at"`
 	ServerTime time.Time `json:"server_time"`
 	BookingID  *string   `json:"booking_id,omitempty"`
 	PriceMinor int64     `json:"price_minor"`
+	TotalMinor int64     `json:"total_minor"`
 	Currency   string    `json:"currency"`
 }
 
@@ -39,14 +43,16 @@ type Store struct{ pool *pgxpool.Pool }
 
 func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
-func (s *Store) Reserve(ctx context.Context, userID, key, eventID, seatID string) (Result, error) {
+// Reserve holds every requested seat or none. seatIDs are distinct canonical UUIDs.
+func (s *Store) Reserve(ctx context.Context, userID, key, eventID string, seatIDs []string) (Result, error) {
+	seatIDs = slices.Sorted(slices.Values(seatIDs))
 	tx, err := s.begin(ctx)
 	if err != nil {
 		return Result{}, err
 	}
 	defer tx.Rollback(context.Background())
-	// UUIDs are normalized by the handler. Include the operation/schema in the hash.
-	payloadHash := sha256.Sum256([]byte("reserve/v1/" + eventID + "/" + seatID))
+	// The sorted seat set makes [a, b] and [b, a] the same request.
+	payloadHash := sha256.Sum256([]byte("reserve/v2/" + eventID + "/" + strings.Join(seatIDs, ",")))
 	if _, err := tx.Exec(ctx, `INSERT INTO idempotency_records (user_id, operation, key, payload_hash)
 		VALUES ($1, 'reserve', $2, $3) ON CONFLICT DO NOTHING`, userID, key, payloadHash[:]); err != nil {
 		return Result{}, err
@@ -64,55 +70,22 @@ func (s *Store) Reserve(ctx context.Context, userID, key, eventID, seatID string
 	if status != nil {
 		return Result{Status: *status, Body: body}, nil
 	}
-	// Lock order: request key, new reservation, seat. No existing reservation is
-	// locked while acquiring a seat; cancellation/expiration lock reservation first.
+	// Lock order: request key, new reservation, seats by ascending ID. No existing
+	// reservation is locked while acquiring seats; cancellation/expiration lock reservation first.
 	var reservation Reservation
 	var tenantID string
-	err = tx.QueryRow(ctx, `INSERT INTO reservations (tenant_id, event_id, user_id, expires_at)
-		SELECT tenant_id, id, $2, clock_timestamp() + interval '5 minutes' FROM events
+	err = tx.QueryRow(ctx, `INSERT INTO reservations (tenant_id, event_id, user_id, quantity, expires_at)
+		SELECT tenant_id, id, $2, $3, clock_timestamp() + interval '5 minutes' FROM events
 		WHERE id = $1 AND status = 'PUBLISHED'
-		RETURNING id::text, tenant_id::text, event_id::text, status, created_at, expires_at`, eventID, userID).
+		RETURNING id::text, tenant_id::text, event_id::text, status, created_at, expires_at`, eventID, userID, len(seatIDs)).
 		Scan(&reservation.ID, &tenantID, &reservation.EventID, &reservation.Status, &reservation.CreatedAt, &reservation.ExpiresAt)
-	result := failure(404, "seat_not_found", "seat in a published event not found")
+	result := failure(404, "seat_not_found", "every seat must belong to a published event")
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return Result{}, err
 	}
 	if err == nil {
-		var seatStatus string
-		var salesOpen, startsAt time.Time
-		err = tx.QueryRow(ctx, queries.LockReservationSeat, seatID, eventID).Scan(&seatStatus, &salesOpen, &startsAt)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		if result, err = allocate(ctx, tx, &reservation, tenantID, userID, key, seatIDs); err != nil {
 			return Result{}, err
-		}
-		if err == nil {
-			// Take the time and occupancy snapshot after the seat lock is acquired.
-			var owned bool
-			if err := tx.QueryRow(ctx, `SELECT clock_timestamp(), EXISTS (
-				SELECT 1 FROM reservation_seats WHERE seat_id = $1 AND released_at IS NULL)`, seatID).
-				Scan(&reservation.ServerTime, &owned); err != nil {
-				return Result{}, err
-			}
-			result = failure(409, "seat_unavailable", "seat is unavailable")
-			if reservation.ServerTime.Before(salesOpen) || !reservation.ServerTime.Before(startsAt) {
-				result = failure(409, "sales_closed", "event is not currently on sale")
-			} else if seatStatus == "AVAILABLE" && !owned {
-				reservation.SeatID = seatID
-				reservation.ExpiresAt = reservation.ServerTime.Add(5 * time.Minute)
-				if _, err := tx.Exec(ctx, `UPDATE reservations SET expires_at = $2 WHERE id = $1`, reservation.ID, reservation.ExpiresAt); err != nil {
-					return Result{}, err
-				}
-				if _, err := tx.Exec(ctx, `INSERT INTO reservation_seats (reservation_id, tenant_id, event_id, seat_id)
-					VALUES ($1, $2, $3, $4)`, reservation.ID, tenantID, eventID, seatID); err != nil {
-					return Result{}, err
-				}
-				// The reservation's event lock prevents a price edit before this quote;
-				// reservation history freezes these terms after the transaction commits.
-				if err := tx.QueryRow(ctx, `SELECT price_minor, currency FROM events WHERE tenant_id = $1 AND id = $2`,
-					tenantID, eventID).Scan(&reservation.PriceMinor, &reservation.Currency); err != nil {
-					return Result{}, err
-				}
-				result = success(201, reservation)
-			}
 		}
 		if result.Status != 201 {
 			if _, err := tx.Exec(ctx, "DELETE FROM reservations WHERE id = $1", reservation.ID); err != nil {
@@ -126,6 +99,51 @@ func (s *Store) Reserve(ctx context.Context, userID, key, eventID, seatID string
 	}
 	// A lost commit response is recovered by retrying with this same request key.
 	return result, tx.Commit(ctx)
+}
+
+// allocate locks every requested seat before deciding, then assigns all of them or none.
+func allocate(ctx context.Context, tx pgx.Tx, reservation *Reservation, tenantID, userID, key string, seatIDs []string) (Result, error) {
+	rows, err := tx.Query(ctx, queries.LockReservationSeats, seatIDs, reservation.EventID)
+	if err != nil {
+		return Result{}, err
+	}
+	statuses, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return Result{}, err
+	}
+	if len(statuses) != len(seatIDs) {
+		return failure(404, "seat_not_found", "every seat must belong to a published event"), nil
+	}
+	// Take the time and occupancy snapshot after every seat lock is acquired. The
+	// reservation's event lock prevents a price edit before this quote.
+	var salesOpen, startsAt time.Time
+	var held bool
+	if err := tx.QueryRow(ctx, `SELECT clock_timestamp(), sales_open_at, starts_at, price_minor, currency,
+		EXISTS (SELECT 1 FROM reservation_seats WHERE seat_id = ANY($3::uuid[]) AND released_at IS NULL)
+		FROM events WHERE tenant_id = $1 AND id = $2`, tenantID, reservation.EventID, seatIDs).
+		Scan(&reservation.ServerTime, &salesOpen, &startsAt, &reservation.PriceMinor, &reservation.Currency, &held); err != nil {
+		return Result{}, err
+	}
+	if reservation.ServerTime.Before(salesOpen) || !reservation.ServerTime.Before(startsAt) {
+		return failure(409, "sales_closed", "event is not currently on sale"), nil
+	}
+	if held || slices.ContainsFunc(statuses, func(status string) bool { return status != "AVAILABLE" }) {
+		return failure(409, "seat_unavailable", "one or more seats are unavailable"), nil
+	}
+	reservation.SeatIDs = seatIDs
+	reservation.TotalMinor = reservation.PriceMinor * int64(len(seatIDs))
+	reservation.ExpiresAt = reservation.ServerTime.Add(5 * time.Minute)
+	if _, err := tx.Exec(ctx, `UPDATE reservations SET expires_at = $2 WHERE id = $1`, reservation.ID, reservation.ExpiresAt); err != nil {
+		return Result{}, err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO reservation_seats (reservation_id, tenant_id, event_id, seat_id)
+		SELECT $1, $2, $3, unnest($4::uuid[])`, reservation.ID, tenantID, reservation.EventID, seatIDs); err != nil {
+		return Result{}, err
+	}
+	if err := audit(ctx, tx, reservation.ID, userID, "", "HELD", "customer_request", key); err != nil {
+		return Result{}, err
+	}
+	return success(201, *reservation), nil
 }
 
 func (s *Store) Get(ctx context.Context, userID, id string) (Reservation, error) {
@@ -157,11 +175,11 @@ func (s *Store) Cancel(ctx context.Context, userID, id string) (Reservation, err
 		if err := tx.QueryRow(ctx, "SELECT clock_timestamp() >= expires_at FROM reservations WHERE id = $1", id).Scan(&expired); err != nil {
 			return Reservation{}, err
 		}
-		status = "CANCELLED"
+		status, reason := "CANCELLED", "customer_request"
 		if expired {
-			status = "EXPIRED"
+			status, reason = "EXPIRED", "deadline_passed"
 		}
-		if err := release(ctx, tx, id, status); err != nil {
+		if err := release(ctx, tx, id, status, userID, reason); err != nil {
 			return Reservation{}, err
 		}
 	}
@@ -200,7 +218,7 @@ func (s *Store) ExpireOne(ctx context.Context) (bool, error) {
 	if !expired {
 		return false, nil
 	}
-	if err := release(ctx, tx, id, "EXPIRED"); err != nil {
+	if err := release(ctx, tx, id, "EXPIRED", "", "deadline_passed"); err != nil {
 		return false, err
 	}
 	return true, tx.Commit(ctx)
@@ -231,19 +249,36 @@ func lockSeats(ctx context.Context, tx pgx.Tx, id string) error {
 	return rows.Err()
 }
 
-func release(ctx context.Context, tx pgx.Tx, id, status string) error {
+// release frees every seat of a held reservation. An empty actor means the worker.
+func release(ctx context.Context, tx pgx.Tx, id, status, actor, reason string) error {
 	if _, err := tx.Exec(ctx, "UPDATE reservation_seats SET released_at = clock_timestamp() WHERE reservation_id = $1 AND released_at IS NULL", id); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, "UPDATE reservations SET status = $2 WHERE id = $1", id, status)
+	if _, err := tx.Exec(ctx, "UPDATE reservations SET status = $2 WHERE id = $1", id, status); err != nil {
+		return err
+	}
+	return audit(ctx, tx, id, actor, "HELD", status, reason, "")
+}
+
+// audit records a transition in the same transaction as the state change, so
+// both commit or neither does. Empty actor, from, and key values are stored as NULL.
+func audit(ctx context.Context, tx pgx.Tx, id, actor, from, to, reason, key string) error {
+	tag, err := tx.Exec(ctx, `INSERT INTO audit_entries
+		(tenant_id, event_id, reservation_id, actor_user_id, from_status, to_status, reason, request_key)
+		SELECT tenant_id, event_id, id, NULLIF($2, '')::uuid, NULLIF($3, ''), $4, $5, NULLIF($6, '')
+		FROM reservations WHERE id = $1`, id, actor, from, to, reason, key)
+	if err == nil && tag.RowsAffected() != 1 {
+		err = errors.New("audit target reservation not found")
+	}
 	return err
 }
 
 func scan(row pgx.Row) (Reservation, error) {
 	var reservation Reservation
-	err := row.Scan(&reservation.ID, &reservation.EventID, &reservation.SeatID, &reservation.Status,
+	err := row.Scan(&reservation.ID, &reservation.EventID, &reservation.SeatIDs, &reservation.Status,
 		&reservation.CreatedAt, &reservation.ExpiresAt, &reservation.ServerTime, &reservation.BookingID,
 		&reservation.PriceMinor, &reservation.Currency)
+	reservation.TotalMinor = reservation.PriceMinor * int64(len(reservation.SeatIDs))
 	return reservation, err
 }
 
