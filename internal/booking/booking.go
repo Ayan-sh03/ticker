@@ -11,12 +11,14 @@ import (
 
 var ErrNotFound = errors.New("booking not found")
 
+// PriceMinor is per seat; TotalMinor covers every booked seat.
 type Receipt struct {
 	ID            string    `json:"id"`
 	ReservationID string    `json:"reservation_id"`
 	EventID       string    `json:"event_id"`
-	SeatID        string    `json:"seat_id"`
+	SeatIDs       []string  `json:"seat_ids"`
 	PriceMinor    int64     `json:"price_minor"`
+	TotalMinor    int64     `json:"total_minor"`
 	Currency      string    `json:"currency"`
 	CreatedAt     time.Time `json:"created_at"`
 }
@@ -29,14 +31,15 @@ type Querier interface {
 func Read(ctx context.Context, q Querier, userID, id string) (Receipt, error) {
 	var receipt Receipt
 	err := q.QueryRow(ctx, `SELECT b.id::text, b.reservation_id::text, b.event_id::text,
-        bs.seat_id::text, b.price_minor, b.currency, b.created_at
-        FROM bookings b JOIN booking_seats bs ON bs.booking_id = b.id
-        WHERE b.id = $1 AND b.user_id = $2`, id, userID).Scan(
-		&receipt.ID, &receipt.ReservationID, &receipt.EventID, &receipt.SeatID,
+        ARRAY(SELECT bs.seat_id::text FROM booking_seats bs WHERE bs.booking_id = b.id ORDER BY bs.seat_id),
+        b.price_minor, b.currency, b.created_at
+        FROM bookings b WHERE b.id = $1 AND b.user_id = $2`, id, userID).Scan(
+		&receipt.ID, &receipt.ReservationID, &receipt.EventID, &receipt.SeatIDs,
 		&receipt.PriceMinor, &receipt.Currency, &receipt.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Receipt{}, ErrNotFound
 	}
+	receipt.TotalMinor = receipt.PriceMinor * int64(len(receipt.SeatIDs))
 	return receipt, err
 }
 

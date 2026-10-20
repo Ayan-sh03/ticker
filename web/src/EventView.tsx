@@ -46,7 +46,7 @@ export function EventView({ id, heading, session, checking, selectedID, select, 
   // before confirmation becomes available.
   const heldQuote = hold.reservation?.price_minor !== undefined && hold.reservation.currency
     ? { price_minor: hold.reservation.price_minor, currency: hold.reservation.currency } : undefined;
-  const ownedID = hold.booking?.seat_id ?? hold.reservation?.seat_id ?? (hold.pending?.kind === 'reserve' ? hold.pending.seatID : undefined);
+  const ownedID = hold.booking?.seat_ids[0] ?? hold.reservation?.seat_ids[0] ?? (hold.pending?.kind === 'reserve' ? hold.pending.seatID : undefined);
   const ownedSeat = inventory.data?.seats.find(seat => seat.id === ownedID);
   const occupied = !!hold.pending || hold.hasRecord;
   const selected = inventory.data?.seats.find(seat => seat.id === selectedID && seat.status === 'AVAILABLE');

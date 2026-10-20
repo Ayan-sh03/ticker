@@ -53,15 +53,16 @@ func (s *Store) Confirm(ctx context.Context, userID, key, id string) (Result, er
 		// Eligibility is decided using the database clock after all inventory locks.
 		// Keeping these locks permits a valid confirmation to commit past its deadline.
 		var now time.Time
-		var ownsSeat bool
+		var ownsSeats bool
 		if err := tx.QueryRow(ctx, `SELECT clock_timestamp(),
-            (SELECT count(*) = 1 AND bool_and(rs.released_at IS NULL AND s.status = 'AVAILABLE')
+            (SELECT count(*) = (SELECT quantity FROM reservations WHERE id = $1)
+                AND bool_and(rs.released_at IS NULL AND s.status = 'AVAILABLE')
              FROM reservation_seats rs JOIN seats s ON s.id = rs.seat_id
-             WHERE rs.reservation_id = $1)`, id).Scan(&now, &ownsSeat); err != nil {
+             WHERE rs.reservation_id = $1)`, id).Scan(&now, &ownsSeats); err != nil {
 			return Result{}, err
 		}
 		result = failure(409, "reservation_not_confirmable", "reservation is no longer confirmable")
-		if status == "HELD" && now.Before(expiresAt) && ownsSeat {
+		if status == "HELD" && now.Before(expiresAt) && ownsSeats {
 			var bookingID string
 			if err := tx.QueryRow(ctx, `INSERT INTO bookings (tenant_id, event_id, reservation_id, user_id, price_minor, currency)
                 SELECT r.tenant_id, r.event_id, r.id, r.user_id, e.price_minor, e.currency
@@ -79,6 +80,9 @@ func (s *Store) Confirm(ctx context.Context, userID, key, id string) (Result, er
 				return Result{}, err
 			}
 			if _, err := tx.Exec(ctx, `UPDATE reservations SET status = 'CONFIRMED' WHERE id = $1`, id); err != nil {
+				return Result{}, err
+			}
+			if err := audit(ctx, tx, id, userID, "HELD", "CONFIRMED", "customer_request", key); err != nil {
 				return Result{}, err
 			}
 			receipt, err := booking.Read(ctx, tx, userID, bookingID)

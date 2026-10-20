@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -85,25 +86,31 @@ func (h *Handler) reserve(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	defer r.Body.Close()
 	var payload struct {
-		EventID string `json:"event_id"`
-		SeatID  string `json:"seat_id"`
+		EventID string   `json:"event_id"`
+		SeatIDs []string `json:"seat_ids"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&payload) != nil || decoder.Decode(new(any)) != io.EOF {
-		writeResult(w, failure(400, "invalid_reservation_payload", "provide one JSON object with event_id and seat_id"))
+		writeResult(w, failure(400, "invalid_reservation_payload", "provide one JSON object with event_id and seat_ids"))
 		return
 	}
-	eventID, eventOK := canonicalID(payload.EventID)
-	seatID, seatOK := canonicalID(payload.SeatID)
-	if !eventOK || !seatOK {
-		writeResult(w, failure(400, "invalid_reservation_payload", "event_id and seat_id must be UUIDs"))
+	eventID, ok := canonicalID(payload.EventID)
+	if !ok || len(payload.SeatIDs) < 1 || len(payload.SeatIDs) > 6 {
+		writeResult(w, failure(400, "invalid_reservation_payload", "provide an event_id UUID and 1–6 seat_ids"))
 		return
+	}
+	seatIDs := make([]string, len(payload.SeatIDs))
+	for i, value := range payload.SeatIDs {
+		if seatIDs[i], ok = canonicalID(value); !ok || slices.Contains(seatIDs[:i], seatIDs[i]) {
+			writeResult(w, failure(400, "invalid_reservation_payload", "seat_ids must be distinct UUIDs"))
+			return
+		}
 	}
 	session, _ := identity.CurrentSession(r.Context())
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	result, err := h.store.Reserve(ctx, session.User.ID, key, eventID, seatID)
+	result, err := h.store.Reserve(ctx, session.User.ID, key, eventID, seatIDs)
 	if err != nil {
 		h.storeError(w, r, err)
 		return

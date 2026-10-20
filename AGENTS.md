@@ -2,14 +2,16 @@
 
 ## Current scope
 
-- Current authorized scope: infrastructure, catalog schema and read-only APIs, deterministic demo seed, seeded-account cookie sessions, single-seat reservations, booking confirmation with owner-only receipts, the customer UI, and tenant-scoped organizer create, read, edit, publish, and delete APIs and UI.
+- Current authorized scope: infrastructure, catalog schema and read-only APIs, deterministic demo seed, seeded-account cookie sessions, all-or-nothing reservations of 1–6 seats, booking confirmation with owner-only receipts, an append-only reservation audit trail, the customer UI, and tenant-scoped organizer create, read, edit, publish, and delete APIs and UI.
 - The initial domain tables are users, tenants, memberships, events, and seats. Enforce tenant/event relationships. Published prices, currency, and layouts remain editable until the first reservation, then stay frozen even after that reservation expires or is cancelled.
 - The customer reservation UI is reviewed and committed. Preserve its design and behavior.
 - Organizer draft and publication APIs are reviewed and committed. Drafts stay private. Organizers may edit title, description, venue, and dates on their events; changed start dates must be in the future and sales must open before the start. Events may be deleted only while they have no reservation history. Protect edits and deletion against stale versions.
-- The current batch adds organizer event editing and deletion to the existing create-and-publish UI, with version checks and the first-reservation policy enforced by the API and database. Use Sol subagents, preserve visual uniformity with the customer UI, keep interactions snappy, validate manually, and leave changes uncommitted for review.
+- Organizer event editing and deletion are reviewed and committed.
+- The current batch (Milestone 3 core) makes `POST /reservations` accept 1–6 distinct seat IDs and hold all of them or none. Lock seats in ascending ID order, hash the sorted seat set for idempotency, and have the database reject a hold whose seat count differs from its quantity. Every reservation transition (held, confirmed, cancelled, expired) writes an `audit_entries` row with actor, transition, reason, and request key in the same transaction. The customer UI keeps its single-seat behavior and only adapts to the new payload shape. Validate manually and open a pull request for review.
+- Work in a learning-first loop: before implementing a milestone, ask the user short concept questions about it, discuss the answers, then implement.
 - Protected UI requests assert their expected account with `X-Ticker-User`; the API must reject a mismatch with the cookie owner before any mutation or private read.
 - Use Hallmark for the UI. Do not use other skills unless the user asks later. Keep the design minimal and interactions snappy.
-- Do not implement confirmed-booking cancellation, multi-seat acquisition, organizer writes beyond event creation, editing, publication, and deletion, public signup, password recovery, or payment integration until the user expands the scope.
+- Do not implement confirmed-booking cancellation, multi-seat selection in the customer UI, organizer writes beyond event creation, editing, publication, and deletion, public signup, password recovery, or payment integration until the user expands the scope.
 - The worker processes reservation expiration only.
 
 ## Work batch size
