@@ -125,6 +125,12 @@ export function useReservation(eventID: string, userID: string | undefined, onSe
         expiredCallback.current();
         return;
       }
+      // A rate-limited request was not processed. Keep its saved key so the retry
+      // stays the same purchase attempt.
+      if (failure instanceof ApiError && failure.status === 429) {
+        setError(`${failure.message} Your request is saved; retry when ready.`);
+        return;
+      }
       // Network errors, response parsing failures and 5xx may follow a commit.
       // Preserve the pending request for replay, including across refresh.
       if (operation && failure instanceof ApiError && failure.status >= 400 && failure.status < 500) {
