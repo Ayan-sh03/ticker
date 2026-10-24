@@ -4,12 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"time"
 )
+
+// ErrNotSent means the provider answered and refused the email. Any other
+// error, such as a timeout, may hide an email that was sent anyway.
+var ErrNotSent = errors.New("email was not sent")
 
 // ResendMailer sends codes through the Resend HTTP API.
 type ResendMailer struct {
@@ -42,7 +47,7 @@ func (m *ResendMailer) SendCode(ctx context.Context, to, code string) error {
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("resend returned %d: %s", resp.StatusCode, detail)
+		return fmt.Errorf("%w: resend returned %d: %s", ErrNotSent, resp.StatusCode, detail)
 	}
 	return nil
 }

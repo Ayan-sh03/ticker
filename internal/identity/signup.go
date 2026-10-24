@@ -22,6 +22,8 @@ const (
 	codeTTL      = 10 * time.Minute
 	codeTries    = 5
 	codeCooldown = time.Minute
+	// After the provider refuses an email, retries wait this long instead.
+	codeRetryAfterFailure = 10 * time.Second
 	// Each address receives at most this many codes per hour, so nobody can
 	// flood someone else's inbox or reset the guess cap indefinitely.
 	codeSendsPerHour = 5
@@ -92,13 +94,33 @@ func (s *Signups) RequestCode(ctx context.Context, email string) error {
 	}); err != nil {
 		return err
 	}
-	if err := s.mail.SendCode(ctx, email, digits); err != nil {
-		// The code never arrived, so let the person ask again right away.
-		s.redis.Del(context.WithoutCancel(ctx), wait, code)
+	err = s.mail.SendCode(ctx, email, digits)
+	if errors.Is(err, ErrNotSent) {
+		// Nothing was delivered: drop the code, give the send back, and allow a
+		// retry after a short pause instead of the full cooldown. A timeout is
+		// not refunded, because that email may still arrive and stay usable.
+		bg := context.WithoutCancel(ctx)
+		pipe := s.redis.Pipeline()
+		pipe.Del(bg, code)
+		pipe.Set(bg, wait, 1, codeRetryAfterFailure)
+		refundSend.Eval(bg, pipe, []string{sends})
+		if _, rerr := pipe.Exec(bg); rerr != nil {
+			err = errors.Join(err, rerr)
+		}
+	}
+	if err != nil {
 		return fmt.Errorf("send verification code: %w", err)
 	}
 	return nil
 }
+
+// refundSend gives back one hourly send without touching the counter's expiry.
+// It never goes below zero or recreates a counter whose hour already ended.
+var refundSend = redis.NewScript(`
+local n = tonumber(redis.call('GET', KEYS[1]) or '0')
+if n > 0 then redis.call('DECR', KEYS[1]) end
+return 0
+`)
 
 // checkCode compares the stored hash and counts a wrong guess in one atomic
 // step, so concurrent guesses cannot exceed the cap. It returns -1 when no
