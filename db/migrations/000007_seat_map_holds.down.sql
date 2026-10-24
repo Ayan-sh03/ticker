@@ -1,0 +1,1 @@
+DROP INDEX reservations_event_held_idx;
