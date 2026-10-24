@@ -59,7 +59,8 @@ export function Signup({ onSuccess, onClose, onLogin }: {
     } finally { setPending(false); }
   }
 
-  if (!email) return <form className="login-form" onInput={() => { if (error) setError(''); }} onSubmit={event => {
+  // Separate keys stop React reusing the email input as the code input.
+  if (!email) return <form key="email" className="login-form" onInput={() => { if (error) setError(''); }} onSubmit={event => {
     event.preventDefault();
     void sendCode(String(new FormData(event.currentTarget).get('email')).trim());
   }}>
@@ -70,7 +71,7 @@ export function Signup({ onSuccess, onClose, onLogin }: {
     <p className="form-switch">Already have an account? <button type="button" className="text-button" disabled={pending} onClick={() => onLogin()}>Log in</button></p>
   </form>;
 
-  return <form className="login-form" onSubmit={create} onInput={() => { if (error) { setError(''); setExists(false); } }}>
+  return <form key="code" className="login-form" onSubmit={create} onInput={() => { if (error) { setError(''); setExists(false); } }}>
     <h2 id="login-title">Check your email.</h2><p>Enter the code sent to <strong>{email}</strong>. It expires in 10 minutes.</p>
     <label htmlFor="signup-code">Code</label><input id="signup-code" name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} autoFocus required aria-describedby="signup-error" />
     <label htmlFor="signup-name">Your name</label><input id="signup-name" name="display_name" autoComplete="name" maxLength={80} required />
