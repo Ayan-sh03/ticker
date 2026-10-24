@@ -85,6 +85,11 @@ main.content { flex: 1; max-width: none; margin: 0; padding: var(--space-2xl) 0 
 .selection-detail .selected-seat { color: var(--color-ink); font-size: var(--text-body); font-weight: 500; }
 .selection-detail .button { margin-top: var(--space-sm); }
 .selected-seat small { display: block; color: var(--color-muted); font-size: var(--text-sm); font-weight: 400; }
+.seat-summary { display: grid; gap: var(--space-sm); margin-bottom: var(--space-md); }
+.selection-detail .price { font-size: var(--text-body); }
+.selection-detail .price small { display: inline; margin-inline-start: var(--space-xs); }
+/* Seats disabled only by the per-hold limit stay visibly available. */
+.seat.seat-capped:disabled { background: transparent; color: var(--color-muted); border-style: solid; opacity: 0.5; }
 .reservation-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); }
 .countdown { color: var(--color-ink); font-size: 1.5rem !important; font-variant-numeric: tabular-nums; }
 .countdown small { font-size: var(--text-sm); color: var(--color-muted); }
