@@ -55,6 +55,12 @@ services:
       context: .
       args:
         APP: api
+    environment:
+      <<: *backend-env
+      SIGNUP_SECRET: ${SIGNUP_SECRET:-dev-only-signup-secret-0123456789abc}
+      # Without a Resend key, signup codes appear in the API log.
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
     depends_on:
       db:
         condition: service_healthy

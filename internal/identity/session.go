@@ -19,7 +19,8 @@ import (
 var (
 	ErrCredentials = errors.New("invalid credentials")
 	ErrSession     = errors.New("session is missing or expired")
-	ErrBusy        = errors.New("login capacity exceeded")
+	ErrBusy        = errors.New("password capacity exceeded")
+	ErrAccount     = errors.New("an account already uses this email")
 )
 
 const passwordCost = 12
@@ -52,7 +53,7 @@ func NewService(pool *pgxpool.Pool) (*Service, error) {
 
 func HashPassword(password string) (string, error) {
 	if len(password) < 12 || len(password) > 72 {
-		return "", errors.New("demo password must contain 12–72 bytes")
+		return "", errors.New("password must contain 12–72 bytes")
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), passwordCost)
 	return string(hash), err
@@ -62,19 +63,27 @@ func PasswordMatches(hash, password string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 }
 
-func (s *Service) Login(ctx context.Context, email, password, previousToken string) (Session, string, error) {
-	// Bound concurrent password work independently of the database pool.
+// passwordSlot bounds concurrent bcrypt work independently of the database pool.
+func (s *Service) passwordSlot(ctx context.Context) (func(), error) {
 	select {
 	case s.verifySlots <- struct{}{}:
-		defer func() { <-s.verifySlots }()
+		return func() { <-s.verifySlots }, nil
 	case <-ctx.Done():
-		return Session{}, "", ctx.Err()
+		return nil, ctx.Err()
 	default:
-		return Session{}, "", ErrBusy
+		return nil, ErrBusy
 	}
+}
+
+func (s *Service) Login(ctx context.Context, email, password, previousToken string) (Session, string, error) {
+	release, err := s.passwordSlot(ctx)
+	if err != nil {
+		return Session{}, "", err
+	}
+	defer release()
 	var session Session
 	var passwordHash string
-	err := s.pool.QueryRow(ctx, queries.GetLoginUser, email).Scan(
+	err = s.pool.QueryRow(ctx, queries.GetLoginUser, email).Scan(
 		&session.User.ID, &session.User.Email, &session.User.DisplayName, &passwordHash, &session.User.TenantIDs)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, "", err
@@ -87,6 +96,35 @@ func (s *Service) Login(ctx context.Context, email, password, previousToken stri
 	if err != nil || passwordHash == "" || !match {
 		return Session{}, "", ErrCredentials
 	}
+	return s.startSession(ctx, session, previousToken, nil)
+}
+
+// CreateAccount creates a customer account and signs it in. The caller must
+// have verified that the requester owns the email address.
+func (s *Service) CreateAccount(ctx context.Context, email, displayName, password, previousToken string) (Session, string, error) {
+	release, err := s.passwordSlot(ctx)
+	if err != nil {
+		return Session{}, "", err
+	}
+	passwordHash, err := HashPassword(password)
+	release()
+	if err != nil {
+		return Session{}, "", err
+	}
+	session := Session{User: User{Email: email, DisplayName: displayName, TenantIDs: []string{}}}
+	return s.startSession(ctx, session, previousToken, func(tx pgx.Tx, session *Session) error {
+		err := tx.QueryRow(ctx, queries.CreateUser, email, displayName, passwordHash).Scan(&session.User.ID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrAccount
+		}
+		return err
+	})
+}
+
+// startSession issues a new session token. A successful login or signup
+// replaces this browser's previous session atomically. before runs first in
+// the same transaction and may fill in session.User.ID.
+func (s *Service) startSession(ctx context.Context, session Session, previousToken string, before func(pgx.Tx, *Session) error) (Session, string, error) {
 	if err := ctx.Err(); err != nil {
 		return Session{}, "", err
 	}
@@ -101,7 +139,11 @@ func (s *Service) Login(ctx context.Context, email, password, previousToken stri
 		return Session{}, "", err
 	}
 	defer tx.Rollback(context.Background())
-	// A successful login replaces this browser's previous session atomically.
+	if before != nil {
+		if err := before(tx, &session); err != nil {
+			return Session{}, "", err
+		}
+	}
 	if previousHash, valid := hashToken(previousToken); valid {
 		if _, err := tx.Exec(ctx, queries.DeleteSession, previousHash); err != nil {
 			return Session{}, "", err

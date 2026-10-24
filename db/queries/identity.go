@@ -13,3 +13,6 @@ var CreateSession string
 
 //go:embed delete_session.sql
 var DeleteSession string
+
+//go:embed create_user.sql
+var CreateUser string

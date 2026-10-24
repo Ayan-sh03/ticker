@@ -33,7 +33,9 @@ var (
 	// UI polling is about 60 reads per minute per open tab.
 	reads  = class{name: "read", device: 300, fingerprint: 120, network: 6000}
 	logins = class{name: "login", device: 10, fingerprint: 5, network: 300, shared: true}
-	writes = class{name: "write", device: 60, fingerprint: 20, network: 1200, shared: true}
+	// A code request sends an email, so signup gets the tightest budget.
+	signups = class{name: "signup", device: 5, fingerprint: 3, network: 60, shared: true}
+	writes  = class{name: "write", device: 60, fingerprint: 20, network: 1200, shared: true}
 	// Reserve and confirm are also limited per account, across all devices.
 	accountWrites = 20
 )
@@ -52,6 +54,8 @@ func (l *Limiter) Middleware(next http.Handler) http.Handler {
 		c := reads
 		if r.Method == http.MethodPost && r.URL.Path == "/sessions" {
 			c = logins
+		} else if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/signups") {
+			c = signups
 		} else if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			c = writes
 		}

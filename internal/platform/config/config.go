@@ -25,6 +25,11 @@ type Config struct {
 	RateLimitSecret string
 	// ClientIPHeader names the header the deployment's own proxy sets to the client address.
 	ClientIPHeader string
+	// Signup stores verification codes in Redis. Without a Resend key, codes are
+	// written to the log, which the API allows only for plain-HTTP development.
+	SignupSecret string
+	ResendAPIKey string
+	EmailFrom    string
 }
 
 func Load() (Config, error) {
@@ -39,6 +44,9 @@ func Load() (Config, error) {
 		// Used only to sign device cookies and hash fingerprints.
 		RateLimitSecret: os.Getenv("RATE_LIMIT_SECRET"),
 		ClientIPHeader:  os.Getenv("CLIENT_IP_HEADER"),
+		SignupSecret:    os.Getenv("SIGNUP_SECRET"),
+		ResendAPIKey:    os.Getenv("RESEND_API_KEY"),
+		EmailFrom:       os.Getenv("EMAIL_FROM"),
 	}
 	// Serverless hosts such as Vercel assign the port through PORT.
 	if addr := os.Getenv("HTTP_ADDR"); addr != "" {
@@ -84,6 +92,9 @@ func Load() (Config, error) {
 	cfg.BasePath = strings.TrimSuffix(os.Getenv("HTTP_BASE_PATH"), "/")
 	if cfg.BasePath != "" && !strings.HasPrefix(cfg.BasePath, "/") {
 		return Config{}, errors.New("HTTP_BASE_PATH must start with /")
+	}
+	if cfg.ResendAPIKey != "" && cfg.EmailFrom == "" {
+		return Config{}, errors.New("EMAIL_FROM is required with RESEND_API_KEY")
 	}
 	if origin.Scheme == "https" && !cfg.CookieSecure {
 		return Config{}, errors.New("COOKIE_SECURE must be true for an https PUBLIC_ORIGIN")
