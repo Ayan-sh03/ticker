@@ -3,6 +3,7 @@ import { ApiError, date, price, request, useResource, type Event, type Session }
 import { EventView } from './EventView';
 import { ErrorMessage } from './Feedback';
 import { Organizer } from './Organizer';
+import { Signup } from './Signup';
 import './organizer.css';
 
 export function App() {
@@ -12,6 +13,8 @@ export function App() {
   const [checking, setChecking] = useState(true);
   const [accountError, setAccountError] = useState('');
   const [loggingOut, setLoggingOut] = useState(false);
+  // The dialog shows login or signup; email carries an address over to login.
+  const [auth, setAuth] = useState<{ mode: 'login' | 'signup'; email?: string }>({ mode: 'login' });
   const dialog = useRef<HTMLDialogElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const organizerRoute = eventID === 'organizer' || eventID.startsWith('organizer/');
@@ -32,6 +35,12 @@ export function App() {
     }).finally(() => { if (!controller.signal.aborted) setChecking(false); });
     return () => controller.abort();
   }, []);
+
+  function signedIn(value: Session) {
+    setSession(value);
+    setAccountError('');
+    dialog.current?.close();
+  }
 
   async function logout() {
     select(null);
@@ -80,8 +89,10 @@ export function App() {
         const box = dialog.current!.getBoundingClientRect();
         if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) dialog.current?.close();
       }
-    }} aria-labelledby="login-title">
-      <Login onSuccess={value => { setSession(value); setAccountError(''); dialog.current?.close(); }} onClose={() => dialog.current?.close()} />
+    }} onClose={() => setAuth({ mode: 'login' })} aria-labelledby="login-title">
+      {auth.mode === 'signup'
+        ? <Signup onSuccess={signedIn} onClose={() => dialog.current?.close()} onLogin={email => setAuth({ mode: 'login', email })} />
+        : <Login key={auth.email ?? ''} email={auth.email} onSuccess={signedIn} onClose={() => dialog.current?.close()} onSignup={() => setAuth({ mode: 'signup' })} />}
     </dialog>
   </div>;
 }
@@ -109,7 +120,9 @@ function EventIndex({ heading }: { heading: React.RefObject<HTMLHeadingElement |
   </>;
 }
 
-function Login({ onSuccess, onClose }: { onSuccess: (session: Session) => void; onClose: () => void }) {
+function Login({ email, onSuccess, onClose, onSignup }: {
+  email?: string; onSuccess: (session: Session) => void; onClose: () => void; onSignup: () => void;
+}) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
   const formRef = useRef<HTMLFormElement>(null);
@@ -138,9 +151,10 @@ function Login({ onSuccess, onClose }: { onSuccess: (session: Session) => void; 
   }
   return <form ref={formRef} onSubmit={submit} onInput={() => { if (error) setError(''); }} className="login-form">
     <h2 id="login-title">Welcome back.</h2><p>Log in to your account.</p>
-    <label htmlFor="email">Email address</label><input id="email" name="email" type="email" maxLength={254} autoComplete="username" autoFocus required aria-invalid={!!error} aria-describedby="login-error" />
-    <label htmlFor="password">Password</label><input id="password" name="password" type="password" autoComplete="current-password" required aria-invalid={!!error} aria-describedby="login-error" />
+    <label htmlFor="email">Email address</label><input id="email" name="email" type="email" maxLength={254} autoComplete="username" defaultValue={email} autoFocus={!email} required aria-invalid={!!error} aria-describedby="login-error" />
+    <label htmlFor="password">Password</label><input id="password" name="password" type="password" autoComplete="current-password" autoFocus={!!email} required aria-invalid={!!error} aria-describedby="login-error" />
     <p id="login-error" className="error form-message" role="alert">{error}</p>
     <div className="form-actions"><button className="button button-solid" disabled={pending}>{pending ? 'Logging in…' : 'Log in'}</button><button type="button" className="button" disabled={pending} onClick={onClose}>Close</button></div>
+    <p className="form-switch">New to Ticker? <button type="button" className="text-button" disabled={pending} onClick={onSignup}>Create an account</button></p>
   </form>;
 }

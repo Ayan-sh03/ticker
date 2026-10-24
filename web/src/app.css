@@ -107,6 +107,11 @@ main.content { flex: 1; max-width: none; margin: 0; padding: var(--space-2xl) 0 
 .form-message { min-height: 3rem; padding-top: var(--space-sm); }
 .form-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-sm); }
 .form-actions .button { min-height: 48px; }
+.login-form > p strong { color: var(--color-ink); font-weight: 500; overflow-wrap: anywhere; }
+.field-hint { margin-top: var(--space-xs); font-size: var(--text-sm); }
+.form-switch { margin-top: var(--space-lg); font-size: var(--text-sm); }
+.text-button { min-height: 44px; padding: 0; border: 0; background: none; color: var(--color-ink); font-size: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.text-button:disabled { color: var(--color-muted); text-decoration: none; }
 .skip-link { position: fixed; inset-block-start: var(--space-sm); inset-inline-start: var(--space-sm); padding: var(--space-md); background: var(--color-ink); color: var(--color-paper); transform: translateY(-200%); }
 .skip-link:focus { transform: translateY(0); }
 @media (min-width: 40rem) {
