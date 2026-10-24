@@ -1,7 +1,10 @@
 package catalog
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -70,10 +73,54 @@ func (s *Store) GetEvent(ctx context.Context, id string) (Event, error) {
 	return event, err
 }
 
-func (s *Store) ListSeats(ctx context.Context, eventID string) ([]Seat, error) {
-	return s.seats.get(ctx, eventID, func(ctx context.Context) ([]Seat, error) {
-		return s.listSeats(ctx, eventID)
+// SeatMap is one encoded seat-map response, shared by every request until its
+// snapshot expires. A 1000-seat map is about 129 KB of JSON and 30 KB gzipped,
+// so it is encoded and compressed once per snapshot instead of per request.
+type SeatMap struct {
+	JSON []byte
+	Gzip []byte
+}
+
+// ListSeats returns nil when the event is missing or unpublished: published
+// events always have seats.
+func (s *Store) ListSeats(ctx context.Context, eventID string) (*SeatMap, error) {
+	return s.seats.get(ctx, eventID, func(ctx context.Context, previous *SeatMap) (*SeatMap, error) {
+		seats, err := s.listSeats(ctx, eventID)
+		if err != nil || len(seats) == 0 {
+			return nil, err
+		}
+		return encodeSeatMap(eventID, seats, previous)
 	})
+}
+
+func encodeSeatMap(eventID string, seats []Seat, previous *SeatMap) (*SeatMap, error) {
+	body, err := json.Marshal(struct {
+		EventID string `json:"event_id"`
+		Seats   []Seat `json:"seats"`
+	}{eventID, seats})
+	if err != nil {
+		return nil, err
+	}
+	// Match json.Encoder, which the other endpoints use.
+	body = append(body, '\n')
+	// Most events have not changed since their last snapshot, and compressing
+	// costs several times more than encoding.
+	if previous != nil && bytes.Equal(previous.JSON, body) {
+		return previous, nil
+	}
+	// Level 2 is about a third faster than the default for 6% more bytes.
+	var compressed bytes.Buffer
+	zw, err := gzip.NewWriterLevel(&compressed, 2)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := zw.Write(body); err != nil {
+		return nil, err
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return &SeatMap{JSON: body, Gzip: compressed.Bytes()}, nil
 }
 
 func (s *Store) listSeats(ctx context.Context, eventID string) ([]Seat, error) {

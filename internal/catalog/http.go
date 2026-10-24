@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -73,22 +74,50 @@ func (h *Handler) listSeats(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	seats, err := h.store.ListSeats(ctx, id)
+	seatMap, err := h.store.ListSeats(ctx, id)
 	if err != nil {
 		h.storeError(w, r, err)
 		return
 	}
-	// Published events always have seats, so an empty snapshot means the event
-	// is missing or unpublished; this replaces a separate existence lookup.
-	if len(seats) == 0 {
+	// No seat map means the event is missing or unpublished; this replaces a
+	// separate existence lookup.
+	if seatMap == nil {
 		h.storeError(w, r, ErrNotFound)
 		return
 	}
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, struct {
-		EventID string `json:"event_id"`
-		Seats   []Seat `json:"seats"`
-	}{id, seats})
+	body := seatMap.JSON
+	header := w.Header()
+	header.Set("Cache-Control", "no-store")
+	header.Set("Content-Type", "application/json")
+	header.Set("Vary", "Accept-Encoding")
+	if acceptsGzip(r) {
+		header.Set("Content-Encoding", "gzip")
+		body = seatMap.Gzip
+	}
+	header.Set("Content-Length", strconv.Itoa(len(body)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
+// acceptsGzip reports whether the client listed gzip in Accept-Encoding
+// without refusing it with q=0.
+func acceptsGzip(r *http.Request) bool {
+	for _, coding := range strings.Split(strings.Join(r.Header.Values("Accept-Encoding"), ","), ",") {
+		name, params, _ := strings.Cut(coding, ";")
+		if !strings.EqualFold(strings.TrimSpace(name), "gzip") {
+			continue
+		}
+		// Parameter names are case-insensitive, so Q=0 refuses gzip too.
+		for _, param := range strings.Split(params, ";") {
+			key, value, _ := strings.Cut(strings.TrimSpace(param), "=")
+			if strings.EqualFold(key, "q") {
+				q, err := strconv.ParseFloat(value, 64)
+				return err == nil && q > 0
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func (h *Handler) storeError(w http.ResponseWriter, r *http.Request, err error) {

@@ -15,6 +15,9 @@ import (
 const (
 	seatCacheTTL     = 2 * time.Second
 	seatFetchTimeout = 3 * time.Second
+	// A stale snapshot is kept this long so an event that has not changed can
+	// reuse its encoded bytes instead of compressing them again.
+	seatKeepStale = time.Minute
 )
 
 type seatCache struct {
@@ -24,7 +27,7 @@ type seatCache struct {
 }
 
 type seatEntry struct {
-	seats   []Seat
+	seatMap *SeatMap
 	expires time.Time
 }
 
@@ -32,56 +35,60 @@ func newSeatCache() *seatCache {
 	return &seatCache{entries: make(map[string]seatEntry)}
 }
 
-func (c *seatCache) get(ctx context.Context, eventID string, fetch func(context.Context) ([]Seat, error)) ([]Seat, error) {
-	if seats, ok := c.lookup(eventID); ok {
-		return seats, nil
+// get returns the event's fresh snapshot, or fetches a new one. fetch receives
+// the previous snapshot, if any, so it can reuse it when nothing changed.
+func (c *seatCache) get(ctx context.Context, eventID string, fetch func(context.Context, *SeatMap) (*SeatMap, error)) (*SeatMap, error) {
+	if seatMap, fresh := c.lookup(eventID); fresh {
+		return seatMap, nil
 	}
 	result := c.group.DoChan(eventID, func() (any, error) {
-		if seats, ok := c.lookup(eventID); ok {
-			return seats, nil
+		previous, fresh := c.lookup(eventID)
+		if fresh {
+			return previous, nil
 		}
 		// Callers share this fetch, so the first one leaving must not cancel it
 		// for the rest. Each caller still stops waiting at its own deadline.
 		fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), seatFetchTimeout)
 		defer cancel()
-		seats, err := fetch(fetchCtx)
+		seatMap, err := fetch(fetchCtx, previous)
 		if err != nil {
 			return nil, err
 		}
-		if len(seats) > 0 {
-			c.store(eventID, seats)
+		if seatMap != nil {
+			c.store(eventID, seatMap)
 		}
-		return seats, nil
+		return seatMap, nil
 	})
 	select {
 	case r := <-result:
 		if r.Err != nil {
 			return nil, r.Err
 		}
-		return r.Val.([]Seat), nil
+		return r.Val.(*SeatMap), nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 }
 
-func (c *seatCache) lookup(eventID string) ([]Seat, bool) {
+// lookup returns the event's last snapshot, if any, and whether it is fresh.
+func (c *seatCache) lookup(eventID string) (*SeatMap, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	entry, ok := c.entries[eventID]
-	if !ok || !time.Now().Before(entry.expires) {
+	if !ok {
 		return nil, false
 	}
-	return entry.seats, true
+	return entry.seatMap, time.Now().Before(entry.expires)
 }
 
-func (c *seatCache) store(eventID string, seats []Seat) {
+func (c *seatCache) store(eventID string, seatMap *SeatMap) {
 	now := time.Now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for key, entry := range c.entries {
-		if now.After(entry.expires) {
+		if now.Sub(entry.expires) > seatKeepStale {
 			delete(c.entries, key)
 		}
 	}
-	c.entries[eventID] = seatEntry{seats: seats, expires: now.Add(seatCacheTTL)}
+	c.entries[eventID] = seatEntry{seatMap: seatMap, expires: now.Add(seatCacheTTL)}
 }
