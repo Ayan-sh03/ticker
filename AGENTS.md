@@ -8,12 +8,13 @@
 - Organizer draft and publication APIs are reviewed and committed. Drafts stay private. Organizers may edit title, description, venue, and dates on their events; changed start dates must be in the future and sales must open before the start. Events may be deleted only while they have no reservation history. Protect edits and deletion against stale versions.
 - Organizer event editing and deletion are reviewed and committed.
 - Multi-seat reservations (1–6 seats, sorted lock order, audit trail) and serverless hosting are reviewed and merged.
-- The current batch adds rate limiting and lock-timeout retries. Limit by signed device cookie, then by a browser fingerprint (address plus browser headers), with only a high per-network flood ceiling, so offices behind one address are not blocked. Limit reserve and confirm per account too. Count logins and writes in Redis so all API instances share one budget; count reads in process memory. If Redis fails, fall back to memory limits; never fail closed. Return 429 with `Retry-After` before any database work; a rate-limited request was not processed, so clients retry with the same idempotency key. Retry lock timeouts and deadlocks a few times inside the API before returning 503 with `Retry-After`. Validate manually and open a pull request for review.
+- Rate limiting and lock-timeout retries are reviewed and merged. Limits use a signed device cookie, then a browser fingerprint, with only a high per-network flood ceiling. Logins, signups, and writes share Redis counters; reads count in process memory. If Redis fails, limits fall back to memory and never fail closed.
+- The current batch adds customer signup with email verification. A six-digit code is emailed through Resend (or written to the API log on plain-HTTP development) and kept hashed in Redis for ten minutes. Each code allows five wrong guesses; each address may request one code per minute and five per hour. Requesting a code never reveals whether an account exists; an existing account is reported only after the code is verified. A verified signup creates a customer account and signs it in. If Redis is unavailable, signup returns 503. Validate manually and open a pull request for review.
 - Two deployments are supported: Docker Compose (nginx, API, worker, PostgreSQL, Redis) and Vercel with Neon PostgreSQL and Upstash Redis, where overdue holds are released on demand instead of by the worker.
 - Work in a learning-first loop: before implementing a milestone, ask the user short concept questions about it, discuss the answers, then implement.
 - Protected UI requests assert their expected account with `X-Ticker-User`; the API must reject a mismatch with the cookie owner before any mutation or private read.
 - Use Hallmark for the UI. Do not use other skills unless the user asks later. Keep the design minimal and interactions snappy.
-- Do not implement confirmed-booking cancellation, multi-seat selection in the customer UI, organizer writes beyond event creation, editing, publication, and deletion, public signup, password recovery, or payment integration until the user expands the scope.
+- Do not implement confirmed-booking cancellation, multi-seat selection in the customer UI, organizer writes beyond event creation, editing, publication, and deletion, organizer signup, password recovery, or payment integration until the user expands the scope.
 - The worker processes reservation expiration only.
 
 ## Work batch size
@@ -36,7 +37,7 @@
 - Keep AGENTS.md as the only tracked Markdown file for now. PLAN.md must remain local and gitignored.
 - Do not create README.md or other project-owned Markdown documentation yet; the user wants the README added at the end.
 - Use .gitkeep files to preserve empty scaffold directories.
-- Use Go net/http and pgx, React/TypeScript/Vite, and PostgreSQL. Redis is allowed for rate limiting only; do not use it for locks, caching, or queues. Do not add brokers or microservices.
+- Use Go net/http and pgx, React/TypeScript/Vite, and PostgreSQL. Redis is allowed for rate limiting and short-lived signup verification codes only; do not use it for locks, caching, or queues. Do not add brokers or microservices.
 - Keep API and worker as separate processes sharing one Go module.
 - Keep credentials in local environment files; commit only example development configuration.
 - Keep PowerShell scripts usable from the repository root on Windows.
