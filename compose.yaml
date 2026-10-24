@@ -141,6 +141,20 @@ services:
       db:
         condition: service_healthy
 
+  # Read-only invariant check; exits 1 when any rule is violated.
+  audit:
+    profiles: ["tools"]
+    build:
+      context: .
+      args:
+        APP: audit
+    environment:
+      <<: *backend-env
+      DB_MAX_CONNS: 1
+    depends_on:
+      db:
+        condition: service_healthy
+
   prometheus:
     image: prom/prometheus:v3.5.0
     profiles: ["observability"]
