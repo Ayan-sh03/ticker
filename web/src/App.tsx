@@ -8,7 +8,7 @@ import './organizer.css';
 
 export function App() {
   const [eventID, setEventID] = useState(() => location.hash.slice(1).toLowerCase());
-  const [selectedID, select] = useState<string | null>(null);
+  const [selectedIDs, select] = useState<string[]>([]);
   const [session, setSession] = useState<Session | null>(null);
   const [checking, setChecking] = useState(true);
   const [accountError, setAccountError] = useState('');
@@ -18,10 +18,10 @@ export function App() {
   const dialog = useRef<HTMLDialogElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const organizerRoute = eventID === 'organizer' || eventID.startsWith('organizer/');
-  const sessionExpired = useCallback(() => { select(null); setSession(null); }, []);
+  const sessionExpired = useCallback(() => { select([]); setSession(null); }, []);
 
   useEffect(() => {
-    const change = () => { setEventID(location.hash.slice(1).toLowerCase()); select(null); };
+    const change = () => { setEventID(location.hash.slice(1).toLowerCase()); select([]); };
     window.addEventListener('hashchange', change);
     return () => window.removeEventListener('hashchange', change);
   }, []);
@@ -43,7 +43,7 @@ export function App() {
   }
 
   async function logout() {
-    select(null);
+    select([]);
     setLoggingOut(true);
     setAccountError('');
     try {
@@ -79,7 +79,7 @@ export function App() {
           onLogin={() => dialog.current?.showModal()} onSessionExpired={sessionExpired} /></div>
         : eventID && eventID !== 'content'
         ? <EventView key={`${eventID}:${loggingOut ? 'leaving' : session?.user.id ?? 'guest'}`} id={eventID} heading={heading}
-          session={loggingOut ? null : session} checking={checking || loggingOut} selectedID={selectedID} select={select}
+          session={loggingOut ? null : session} checking={checking || loggingOut} selectedIDs={selectedIDs} select={select}
           onLogin={() => dialog.current?.showModal()} onSessionExpired={sessionExpired} />
         : <EventIndex heading={heading} />}
     </main>

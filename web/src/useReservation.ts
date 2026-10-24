@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError, request, type Booking, type Reservation, type Session } from './api';
 
-type Pending = { kind: 'reserve'; key: string; seatID: string }
+type Pending = { kind: 'reserve'; key: string; seatIDs: string[] }
   | { kind: 'confirm'; key: string; reservationID: string }
   | { kind: 'cancel'; reservationID: string };
 type Saved = { reservationID?: string; bookingID?: string; pending?: Pending };
 class StorageError extends Error {}
+export const maxSeats = 6;
+// EventView names the taken seats in place of this message.
+export const seatConflict = 'Not all seats you selected are available.';
 const uuid = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 
 function readSaved(key: string): Saved {
@@ -14,7 +17,14 @@ function readSaved(key: string): Saved {
     || (saved.reservationID !== undefined && !uuid(saved.reservationID))
     || (saved.bookingID !== undefined && !uuid(saved.bookingID))) throw new Error('Invalid saved reservation');
   const pending = saved.pending;
-  if (pending && !((pending.kind === 'reserve' && uuid(pending.key) && uuid(pending.seatID))
+  // Requests saved before multi-seat selection stored one seatID.
+  if (pending?.kind === 'reserve' && pending.seatIDs === undefined && pending.seatID !== undefined) {
+    pending.seatIDs = [pending.seatID];
+    delete pending.seatID;
+  }
+  if (pending && !((pending.kind === 'reserve' && uuid(pending.key) && Array.isArray(pending.seatIDs)
+      && pending.seatIDs.length >= 1 && pending.seatIDs.length <= maxSeats && pending.seatIDs.every(uuid)
+      && new Set(pending.seatIDs).size === pending.seatIDs.length)
     || (pending.kind === 'confirm' && uuid(pending.key) && uuid(pending.reservationID))
     || (pending.kind === 'cancel' && uuid(pending.reservationID)))) throw new Error('Invalid saved request');
   return saved;
@@ -93,7 +103,7 @@ export function useReservation(eventID: string, userID: string | undefined, onSe
       const result = await request<{ reservation: Reservation }>(operation.kind === 'reserve' ? '/reservations' : `/reservations/${operation.reservationID}`, {
         method: operation.kind === 'reserve' ? 'POST' : 'DELETE', signal,
         headers: { 'X-Ticker-User': userID!, ...(operation.kind === 'reserve' ? { 'Idempotency-Key': operation.key } : {}) },
-        ...(operation.kind === 'reserve' ? { body: JSON.stringify({ event_id: eventID, seat_ids: [operation.seatID] }) } : {}),
+        ...(operation.kind === 'reserve' ? { body: JSON.stringify({ event_id: eventID, seat_ids: operation.seatIDs }) } : {}),
       });
       if (signal.aborted) return;
       if (!persist({ reservationID: result.reservation.id })) throw new StorageError();
@@ -135,7 +145,7 @@ export function useReservation(eventID: string, userID: string | undefined, onSe
       // Preserve the pending request for replay, including across refresh.
       if (operation && failure instanceof ApiError && failure.status >= 400 && failure.status < 500) {
         if (!persist({ ...saved.current, pending: undefined })) return;
-        setError(failure.code === 'seat_unavailable' ? 'That seat was taken. Choose another.'
+        setError(failure.code === 'seat_unavailable' ? seatConflict
           : failure.code === 'reservation_not_confirmable' ? 'This hold can no longer be confirmed. Checking its status.' : failure.message);
         try { await read(active.signal); } catch { /* Keep the original failure and offer retry. */ }
       } else {
@@ -213,8 +223,10 @@ export function useReservation(eventID: string, userID: string | undefined, onSe
     reservation, booking, pending, seconds, ready, busy, error, clockReady: !!clock,
     hasRecord: !!saved.current.reservationID,
     canConfirm: reservation?.status === 'HELD' && !!clock && seconds > 0 && !busy && !pending && !error,
-    reserve: (seatID: string) => {
-      if (!saved.current.reservationID) start({ kind: 'reserve', key: crypto.randomUUID(), seatID });
+    reserve: (seatIDs: string[]) => {
+      if (!saved.current.reservationID && seatIDs.length >= 1 && seatIDs.length <= maxSeats) {
+        start({ kind: 'reserve', key: crypto.randomUUID(), seatIDs });
+      }
     },
     confirm: () => { if (reservation && clock && seconds > 0) start({ kind: 'confirm', key: crypto.randomUUID(), reservationID: reservation.id }); },
     cancel: () => { if (reservation?.status === 'HELD') start({ kind: 'cancel', reservationID: reservation.id }); },
