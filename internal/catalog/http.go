@@ -102,17 +102,20 @@ func (h *Handler) listSeats(w http.ResponseWriter, r *http.Request) {
 // acceptsGzip reports whether the client listed gzip in Accept-Encoding
 // without refusing it with q=0.
 func acceptsGzip(r *http.Request) bool {
-	for _, part := range strings.Split(strings.Join(r.Header.Values("Accept-Encoding"), ","), ",") {
-		name, params, _ := strings.Cut(part, ";")
+	for _, coding := range strings.Split(strings.Join(r.Header.Values("Accept-Encoding"), ","), ",") {
+		name, params, _ := strings.Cut(coding, ";")
 		if !strings.EqualFold(strings.TrimSpace(name), "gzip") {
 			continue
 		}
-		weight, ok := strings.CutPrefix(strings.TrimSpace(params), "q=")
-		if !ok {
-			return true
+		// Parameter names are case-insensitive, so Q=0 refuses gzip too.
+		for _, param := range strings.Split(params, ";") {
+			key, value, _ := strings.Cut(strings.TrimSpace(param), "=")
+			if strings.EqualFold(key, "q") {
+				q, err := strconv.ParseFloat(value, 64)
+				return err == nil && q > 0
+			}
 		}
-		q, err := strconv.ParseFloat(weight, 64)
-		return err == nil && q > 0
+		return true
 	}
 	return false
 }
