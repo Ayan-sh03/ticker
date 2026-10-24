@@ -12,7 +12,10 @@ import (
 // seat-map reads do not reach the database on every poll. It only ever caches
 // read results: ownership is still decided by reserve and confirm under row
 // locks, so a stale snapshot can misreport availability but never ownership.
-const seatCacheTTL = 2 * time.Second
+const (
+	seatCacheTTL     = 2 * time.Second
+	seatFetchTimeout = 3 * time.Second
+)
 
 type seatCache struct {
 	mu      sync.RWMutex
@@ -33,11 +36,15 @@ func (c *seatCache) get(ctx context.Context, eventID string, fetch func(context.
 	if seats, ok := c.lookup(eventID); ok {
 		return seats, nil
 	}
-	value, err, _ := c.group.Do(eventID, func() (any, error) {
+	result := c.group.DoChan(eventID, func() (any, error) {
 		if seats, ok := c.lookup(eventID); ok {
 			return seats, nil
 		}
-		seats, err := fetch(ctx)
+		// Callers share this fetch, so the first one leaving must not cancel it
+		// for the rest. Each caller still stops waiting at its own deadline.
+		fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), seatFetchTimeout)
+		defer cancel()
+		seats, err := fetch(fetchCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -46,10 +53,15 @@ func (c *seatCache) get(ctx context.Context, eventID string, fetch func(context.
 		}
 		return seats, nil
 	})
-	if err != nil {
-		return nil, err
+	select {
+	case r := <-result:
+		if r.Err != nil {
+			return nil, r.Err
+		}
+		return r.Val.([]Seat), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
-	return value.([]Seat), nil
 }
 
 func (c *seatCache) lookup(eventID string) ([]Seat, bool) {
