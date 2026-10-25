@@ -352,6 +352,22 @@
 .organizer-seats .seat[data-seat-status='BLOCKED']:not([aria-pressed='true']):not(:disabled) { background: var(--color-paper-2); color: var(--color-muted); border-style: dotted; }
 .organizer-seats .seat-grid .seat .seat-state:not(:empty) { display: block; margin: 0; font-size: 0.75rem; line-height: 1.2; }
 
+/* Hallmark · component: organizer bookings and holds · genre: modern-minimal · theme: Coral · motion: none */
+.organizer-sales-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.organizer-sales-summary dd { font-size: 1.5rem; font-weight: 550; }
+.organizer-tabs { display: flex; flex-wrap: wrap; gap: var(--space-sm); margin-block: var(--space-xl); }
+.organizer-tabs .button[aria-pressed='true'] { background: var(--color-ink); color: var(--color-paper); border-color: var(--color-ink); }
+.organizer-sales { border-top: 1px solid var(--color-rule); }
+.organizer-sales > li { display: grid; gap: var(--space-sm); padding-block: var(--space-lg); border-bottom: 1px solid var(--color-rule); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.organizer-sales > li > * { min-width: 0; overflow-wrap: anywhere; }
+.organizer-sales-name { color: var(--color-ink); font-size: var(--text-body); font-weight: 500; }
+
+@media (min-width: 40rem) {
+  .organizer-details.organizer-sales-summary { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .organizer-sales > li { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(7rem, auto); align-items: center; gap: var(--space-xl); }
+  .organizer-sales > li > :last-child { text-align: end; }
+}
+
 @media (min-width: 40rem) {
   .organizer .event-list { display: grid; grid-template-columns: minmax(0, 1fr) minmax(7rem, max-content) max-content; column-gap: var(--space-2xl); }
   .organizer .event-list > li,
