@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { ApiError, date, price, request, type OrganizerEvent, type Session, type Tenant } from './api';
+import { usePrivateResource } from './usePrivateResource';
+import { OrganizerSeats } from './OrganizerSeats';
 import { ErrorMessage } from './Feedback';
 import { OrganizerForm } from './OrganizerForm';
 import { OrganizerEditForm } from './OrganizerEditForm';
@@ -15,32 +17,6 @@ type Props = {
 };
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-// Every private read asserts the account that owns this view and drops old data
-// before a recheck, including when membership has been revoked.
-function usePrivateResource<T>(path: string | null, userID: string, onSessionExpired: () => void) {
-  const [revision, setRevision] = useState(0);
-  const [state, setState] = useState<{ data?: T; error?: string; forbidden?: boolean }>({});
-  const expire = useRef(onSessionExpired);
-  expire.current = onSessionExpired;
-  useEffect(() => {
-    if (!path) return;
-    const controller = new AbortController();
-    setState({});
-    request<T>(path, { signal: controller.signal, headers: { 'X-Ticker-User': userID } }).then(data => {
-      if (!controller.signal.aborted) setState({ data });
-    }).catch(failure => {
-      if (controller.signal.aborted) return;
-      if (failure instanceof ApiError && failure.status === 401) { setState({}); expire.current(); return; }
-      const forbidden = failure instanceof ApiError && failure.status === 403;
-      setState({ forbidden, error: forbidden ? 'You no longer have access to this organizer workspace.'
-        : failure instanceof ApiError ? failure.message : 'Unable to connect. Please try again.' });
-    });
-    return () => controller.abort();
-  }, [path, userID, revision]);
-  return { ...state, retry: () => setRevision(value => value + 1), replace: (data: T) => setState({ data }),
-    deny: () => setState({ forbidden: true, error: 'You no longer have access to this organizer workspace.' }) };
-}
 
 export function Organizer({ route, session, checking, heading, onLogin, onSessionExpired }: Props) {
   useEffect(() => { heading.current?.focus(); }, [heading]);
@@ -68,13 +44,14 @@ function Workspace({ route, session, heading, onSessionExpired }: Omit<Props, 'c
     <p className="organizer-empty">You can still browse events and book a seat.</p>
   </>;
   const tenant = tenantID ? data.tenants.find(item => item.id === tenantID) : data.tenants[0];
-  if (!tenant || extra || (target && target !== 'new' && !uuid.test(target))) return <>
+  const view = extra === 'seats' ? extra : undefined;
+  if (!tenant || (extra && !view) || (target && target !== 'new' && !uuid.test(target)) || (view && !uuid.test(target))) return <>
     <a className="back-link" href="#organizer">← Organizer</a>
     <div className="page-heading"><h1 ref={heading} tabIndex={-1}>Workspace unavailable</h1><p>This workspace or event is unavailable to your account.</p></div>
   </>;
   const base = `organizer/${tenant.id}`;
   return <>
-    <a className="back-link" href={target ? `#${base}` : '#'}>← {target ? 'Organizer events' : 'All events'}</a>
+    <a className="back-link" href={view ? `#${base}/${target}` : target ? `#${base}` : '#'}>← {view ? 'Event review' : target ? 'Organizer events' : 'All events'}</a>
     <div className="organizer-toolbar">
       <div className="organizer-field"><label htmlFor="organizer-tenant">Workspace</label>
         <OrganizerSelect id="organizer-tenant" label="Workspace" value={tenant.id}
@@ -86,7 +63,8 @@ function Workspace({ route, session, heading, onSessionExpired }: Omit<Props, 'c
     {target === 'new' ? <>
       <div className="page-heading"><h1 ref={heading} tabIndex={-1}>New event</h1><p>Create a private draft for {tenant.name}.</p></div>
       <OrganizerForm userID={session.user.id} tenantID={tenant.id} onSessionExpired={onSessionExpired} />
-    </> : target ? <EventDetail tenantID={tenant.id} eventID={target} userID={session.user.id} heading={heading} onSessionExpired={onSessionExpired} />
+    </> : view === 'seats' ? <OrganizerSeats tenantID={tenant.id} eventID={target} userID={session.user.id} heading={heading} onSessionExpired={onSessionExpired} />
+      : target ? <EventDetail tenantID={tenant.id} eventID={target} userID={session.user.id} heading={heading} onSessionExpired={onSessionExpired} />
       : <EventList tenant={tenant} userID={session.user.id} heading={heading} onSessionExpired={onSessionExpired} />}
   </>;
 }
@@ -229,7 +207,7 @@ function EventDetail({ tenantID, eventID, userID, heading, onSessionExpired }: {
         {error && <p className="error" role="alert">{error}</p>}
         <div className="form-actions"><button className="button button-solid" disabled={pending || confirmDelete || deleteNeedsRecheck} onClick={() => void publish()}>{pending ? confirmDelete ? 'Deleting…' : 'Publishing…' : uncertain ? 'Retry publication' : 'Publish event'}</button>
           {uncertain && <button className="button" disabled={pending} onClick={recheck}>Recheck event</button>}</div>
-      </div> : <div className="organizer-confirm"><p>{event.price_layout_editable ? 'You can edit price, currency, and the seat layout until the first reservation.' : 'Price, currency, and the seat layout are fixed after the first reservation.'}</p><a className="button button-solid" href={`#${event.id}`}>View customer page <span aria-hidden="true">↗</span></a></div>}
+      </div> : <div className="organizer-confirm"><p>{event.price_layout_editable ? 'You can edit price, currency, and the seat layout until the first reservation.' : 'Price, currency, and the seat layout are fixed after the first reservation.'}</p><div className="form-actions"><a className="button button-solid" href={`#organizer/${tenantID}/${event.id}/seats`}>Manage seats <span aria-hidden="true">↗</span></a><a className="button" href={`#${event.id}`}>View customer page <span aria-hidden="true">↗</span></a></div></div>}
     </>)}
   </>;
 }

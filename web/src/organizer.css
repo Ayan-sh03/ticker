@@ -334,6 +334,24 @@
 .organizer-select-option[aria-selected='true'] { font-weight: 550; }
 .organizer-select-check { flex-shrink: 0; }
 
+/* Hallmark · component: organizer seat availability · genre: modern-minimal · theme: Coral · motion: none */
+.organizer-seat-actions {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
+  display: grid;
+  gap: var(--space-md);
+  margin-block: var(--space-xl);
+  border-block: 1px solid var(--color-rule);
+  padding-block: var(--space-lg);
+  background: var(--color-paper);
+}
+.organizer-seat-actions p { font-size: var(--text-sm); }
+.organizer-seat-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-lg); margin-bottom: var(--space-md); }
+.organizer-seat-row h3 { margin: 0; }
+.organizer-seats .seat[data-seat-status='BLOCKED']:not([aria-pressed='true']):not(:disabled) { background: var(--color-paper-2); color: var(--color-muted); border-style: dotted; }
+.organizer-seats .seat-grid .seat .seat-state:not(:empty) { display: block; margin: 0; font-size: 0.75rem; line-height: 1.2; }
+
 @media (min-width: 40rem) {
   .organizer .event-list { display: grid; grid-template-columns: minmax(0, 1fr) minmax(7rem, max-content) max-content; column-gap: var(--space-2xl); }
   .organizer .event-list > li,
