@@ -46,7 +46,7 @@ function Bars({ label, rows }: { label: string; rows: { name: string; value: num
 }
 
 // A column chart over time. The picture is decorative; the values are in a table anyone can open.
-function Columns({ label, columns }: { label: string; columns: { key: string; label: string; value: number; text: string }[] }) {
+function Columns({ label, columns }: { label: string; columns: { key: string; label: string; value: number; text: string; listed?: boolean }[] }) {
   const max = Math.max(...columns.map(column => column.value), 1);
   const width = 100 / columns.length;
   return <figure className="insight-columns">
@@ -56,7 +56,7 @@ function Columns({ label, columns }: { label: string; columns: { key: string; la
     </svg>
     <figcaption><span>{columns[0]?.label}</span><span>{columns[columns.length - 1]?.label}</span></figcaption>
     <details className="insight-data"><summary>{label}: show values</summary>
-      <table><tbody>{columns.filter(column => column.value).map(column => <tr key={column.key}><th scope="row">{column.label}</th><td>{column.text}</td></tr>)}</tbody></table>
+      <table><tbody>{columns.filter(column => column.listed || column.value).map(column => <tr key={column.key}><th scope="row">{column.label}</th><td>{column.text}</td></tr>)}</tbody></table>
     </details>
   </figure>;
 }
@@ -126,7 +126,7 @@ export function EventInsights({ tenantID, eventID, userID, heading, onSessionExp
       </section>
       {data.daily.length > 0 && <section className="insight-section"><h2>Net revenue by day</h2>
         <Columns label="Net revenue by day" columns={data.daily.map(day => ({ key: day.day, label: new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone: 'UTC' }).format(new Date(day.day)),
-          value: Number(day.net_minor), text: `${money(day.net_minor, event.currency)}, ${plural(day.seats_sold, 'seat')}` }))} />
+          value: Number(day.net_minor), text: `${money(day.net_minor, event.currency)}, ${plural(day.seats_sold, 'seat')}`, listed: true }))} />
       </section>}
       <section className="insight-section"><h2>Sections</h2>
         <Bars label="Seats sold by section" rows={data.sections.map(section => ({ name: section.section, value: section.seats_sold, max: section.capacity,
@@ -144,9 +144,10 @@ export function EventInsights({ tenantID, eventID, userID, heading, onSessionExp
       <section className="insight-section"><h2>Timing</h2>
         <Tiles items={[
           ['Sales opened', new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: zone }).format(new Date(data.sales_open_at))],
-          ['First booking', data.first_booking_seconds === null ? 'No bookings yet' : `${duration(data.first_booking_seconds)} after opening`],
+          ['First booking', data.first_booking_seconds !== null ? `${duration(data.first_booking_seconds)} after opening`
+            : event.bookings ? 'None since the current opening' : 'No bookings yet'],
           ['Sold out', data.sold_out_seconds !== null ? `${duration(data.sold_out_seconds)} after opening`
-            : event.seats_sold === event.capacity && event.capacity > 0 ? 'Unknown while seats are blocked' : 'Not sold out'],
+            : event.seats_sold === event.capacity && event.capacity > 0 ? 'Sold out, time unknown' : 'Not sold out'],
         ]} />
       </section>
     </>)}
