@@ -52,13 +52,10 @@ export function OrganizerSales({ tenantID, eventID, userID, heading, onSessionEx
     if (cancelling) return;
     setCancelling(booking.id); setMessage(''); setFailure('');
     try {
-      const result = await request<{ booking: Booking }>(`${path}/bookings/${booking.id}/cancel`, { method: 'POST', headers: { 'X-Ticker-User': userID } });
+      await request<{ booking: Booking }>(`${path}/bookings/${booking.id}/cancel`, { method: 'POST', headers: { 'X-Ticker-User': userID } });
       if (!mounted.current) return;
-      // Adjust the totals loaded with this page, which counted the booking as active.
-      const data = list.data;
-      if (data?.bookings) list.replace({ ...data, bookings: data.bookings.map(row => row.id === booking.id ? result.booking : row), summary: {
-        ...data.summary, bookings: data.summary.bookings - 1, cancelled_bookings: data.summary.cancelled_bookings + 1,
-        seats_sold: data.summary.seats_sold - booking.seat_labels.length } });
+      // Reload whatever page is showing now, with fresh totals and a fresh access check.
+      list.retry();
       setMessage(`Cancelled ${booking.customer.display_name}'s booking. ${seats(booking.seat_labels)} back on sale.`);
     } catch (error) {
       if (!mounted.current) return;
