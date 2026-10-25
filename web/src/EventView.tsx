@@ -121,7 +121,8 @@ export function EventView({ id, heading, session, checking, selectedIDs, select,
             {hold.pending && !hold.busy && <p>Your saved {hold.pending.kind === 'reserve' ? 'reservation' : hold.pending.kind === 'confirm' ? 'confirmation' : 'cancellation'} request needs recovery before another action.</p>}
             {occupied && (ownedSeats.length ? <SeatSummary seats={ownedSeats} /> : <p className="selected-seat">Your {owned === 1 ? 'seat' : 'seats'}</p>)}
             {hold.booking && cancelled ? <div className="receipt" role="status">
-              <h3>Booking cancelled</h3><p>The organizer cancelled this booking, and its {seatCount(hold.booking.seat_ids.length)} went back on sale.</p>
+              <h3>Booking cancelled</h3><p className="price">{total(hold.booking, hold.booking.seat_ids.length)}<small>for {seatCount(hold.booking.seat_ids.length)}, cancelled</small></p>
+              <p>The organizer cancelled this booking, and its seats went back on sale.</p>
               <dl><dt>Booking reference</dt><dd>{hold.booking.id}</dd>{hold.booking.cancelled_at && <><dt>Cancelled</dt><dd>{new Date(hold.booking.cancelled_at).toLocaleString()}</dd></>}</dl>
             </div> : hold.booking ? <div className="receipt" role="status">
               <h3>Booking confirmed</h3><p className="price">{total(hold.booking, hold.booking.seat_ids.length)}<small>for {seatCount(hold.booking.seat_ids.length)}</small></p>
