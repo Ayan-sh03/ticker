@@ -33,7 +33,7 @@ Rules the database enforces on its own:
 
 ## 3. How a seat is won
 
-All writes run in `READ COMMITTED` transactions. Customer writes set a 250 ms lock timeout and a 1 s statement timeout. Organizer seat blocking and booking cancellation set a 1 s lock timeout; other organizer writes are bounded only by the request deadline. Row locks decide ownership. Every path takes its locks in the same order, so two requests can never wait on each other in a circle:
+All writes run in `READ COMMITTED` transactions. Reservation transactions (reserve, confirm, cancel, and worker expiry) set a 250 ms lock timeout and a 1 s statement timeout. Organizer seat blocking and booking cancellation set a 1 s lock timeout after the membership check, so the membership lock wait itself is not covered. Other writes, such as event edits, interest, and sessions, are bounded only by the request deadline. Row locks decide ownership. Every path takes its locks in the same order, so two requests can never wait on each other in a circle:
 
 | Operation | Lock order |
 |---|---|
