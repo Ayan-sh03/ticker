@@ -18,9 +18,13 @@ export function OrganizerSeats({ tenantID, eventID, userID, heading, onSessionEx
   const inventory = usePrivateResource<{ seats: Seat[] }>(`${path}/seats`, userID, onSessionExpired);
   const [selected, setSelected] = useState<string[]>([]);
   const [pending, setPending] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const mounted = useRef(true);
+  // Only the latest refresh or change may update the map, so a slow response
+  // cannot overwrite a newer one.
+  const latest = useRef(0);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { if (event.data) heading.current?.focus(); }, [event.data, heading]);
 
@@ -45,13 +49,14 @@ export function OrganizerSeats({ tenantID, eventID, userID, heading, onSessionEx
 
   // Refresh keeps the current map on screen instead of flashing a loading state.
   async function refresh() {
+    const ticket = ++latest.current;
     try {
       const data = await request<{ seats: Seat[] }>(`${path}/seats`, { headers: { 'X-Ticker-User': userID } });
-      if (!mounted.current) return;
+      if (!mounted.current || ticket !== latest.current) return;
       inventory.replace(data);
       setSelected(ids => ids.filter(id => data.seats.some(seat => seat.id === id && changeable(seat))));
     } catch (failure) {
-      if (mounted.current && !failed(failure)) setError('Seats could not refresh. Try again.');
+      if (mounted.current && ticket === latest.current && !failed(failure)) setError('Seats could not refresh. Try again.');
     }
   }
 
@@ -66,12 +71,13 @@ export function OrganizerSeats({ tenantID, eventID, userID, heading, onSessionEx
     const targets = status === 'BLOCKED' ? toBlock : toUnblock;
     if (pending || !targets.length) return;
     setPending(true); setMessage(''); setError('');
+    const ticket = ++latest.current;
     try {
       const result = await request<{ seats: Seat[] }>(`${path}/seats`, {
         method: 'PATCH', headers: { 'X-Ticker-User': userID },
         body: JSON.stringify({ seat_ids: targets.map(seat => seat.id), status }),
       });
-      if (!mounted.current) return;
+      if (!mounted.current || ticket !== latest.current) return;
       const updated = new Map(result.seats.map(seat => [seat.id, seat]));
       inventory.replace({ seats: seats.map(seat => updated.get(seat.id) ?? seat) });
       setSelected(ids => ids.filter(id => !updated.has(id)));
@@ -80,7 +86,7 @@ export function OrganizerSeats({ tenantID, eventID, userID, heading, onSessionEx
       if (!mounted.current || failed(failure)) return;
       if (failure instanceof ApiError && failure.code === 'seat_unavailable') {
         setError('Some selected seats were held or booked meanwhile, so nothing changed. Seats refreshed; check your selection.');
-        void refresh();
+        await refresh();
       } else if (failure instanceof ApiError && failure.status < 500) setError(failure.message);
       // The change is idempotent, so retrying an unknown outcome is safe.
       else setError('The change may not have been saved. Try again.');
@@ -99,10 +105,10 @@ export function OrganizerSeats({ tenantID, eventID, userID, heading, onSessionEx
       <div className="organizer-seat-actions" role="region" aria-label="Selected seats">
         <p>{chosen.length ? `${seatCount(chosen.length)} selected${full ? `, the most one change allows` : ''}.` : 'Select available seats to block, or blocked seats to unblock.'}</p>
         <div className="form-actions">
-          <button className="button button-solid" disabled={pending || !toBlock.length} onClick={() => void change('BLOCKED')}>{pending ? 'Saving…' : `Block ${toBlock.length ? seatCount(toBlock.length) : 'seats'}`}</button>
+          <button className="button button-solid" disabled={pending || !toBlock.length} onClick={() => void change('BLOCKED')}>{pending && !refreshing ? 'Saving…' : `Block ${toBlock.length ? seatCount(toBlock.length) : 'seats'}`}</button>
           <button className="button" disabled={pending || !toUnblock.length} onClick={() => void change('AVAILABLE')}>Unblock {toUnblock.length ? seatCount(toUnblock.length) : 'seats'}</button>
           <button className="button" disabled={pending || !chosen.length} onClick={() => { setSelected([]); setMessage(''); setError(''); }}>Clear</button>
-          <button className="button" disabled={pending} onClick={() => { setMessage(''); setError(''); void refresh(); }}>Refresh</button>
+          <button className="button" disabled={pending} onClick={() => { setMessage(''); setError(''); setPending(true); setRefreshing(true); void refresh().finally(() => { if (mounted.current) { setPending(false); setRefreshing(false); } }); }}>{refreshing ? 'Refreshing…' : 'Refresh'}</button>
         </div>
         {message && <p role="status">{message}</p>}
         {error && <p className="error" role="alert">{error}</p>}
