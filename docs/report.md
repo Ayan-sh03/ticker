@@ -129,7 +129,7 @@ These are breakpoint tests: k6 raises the arrival rate past what the stack can s
 ## 9. Trade-offs and limits
 
 - **PostgreSQL decides everything.** No distributed locks, queues, or caches take part in ownership. This is simpler and safe, but one primary database is the ceiling for writes to a single event.
-- **Short cache, small lie.** The public seat map can be up to 2 seconds old. It may show a seat as free that was just taken. The reserve request then says so, and ownership is never wrong.
+- **Short cache, small lie.** A public seat-map snapshot is served for 2 seconds after it is built, so it can be a little older than that once query time is added. It may show a seat as free that was just taken. The reserve request then says so, and ownership is never wrong.
 - **No payments or refunds.** Confirmation stands in for payment, and organizer cancellation does not refund.
 - **Not built:** customer cancellation of confirmed bookings, organizer signup, password recovery, editing fee rates or time zones in the UI, and page-view tracking.
 - **No automated tests, by choice.** Correctness rests on database constraints, the audit command, CI checks, and manual smoke tests. A race-test suite would be the next thing to add.
