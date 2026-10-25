@@ -35,6 +35,8 @@ func RegisterRoutes(mux *http.ServeMux, store *Store, sessions *identity.Handler
 	mux.Handle("GET /organizer/tenants/{tenantID}/events/{eventID}/bookings", sessions.RequireUser(http.HandlerFunc(h.listBookings)))
 	mux.Handle("GET /organizer/tenants/{tenantID}/events/{eventID}/holds", sessions.RequireUser(http.HandlerFunc(h.listHolds)))
 	mux.Handle("POST /organizer/tenants/{tenantID}/events/{eventID}/bookings/{bookingID}/cancel", sessions.RequireUser(http.HandlerFunc(h.cancelBooking)))
+	mux.Handle("GET /organizer/tenants/{tenantID}/insights", sessions.RequireUser(http.HandlerFunc(h.tenantInsights)))
+	mux.Handle("GET /organizer/tenants/{tenantID}/events/{eventID}/insights", sessions.RequireUser(http.HandlerFunc(h.eventInsights)))
 }
 
 func (h *Handler) listTenants(w http.ResponseWriter, r *http.Request) {
@@ -384,6 +386,42 @@ func (h *Handler) listHolds(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"summary": summary, "holds": holds, "next": cursorValue(next)})
+}
+
+func (h *Handler) tenantInsights(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := pathID(w, r, "tenantID")
+	if !ok {
+		return
+	}
+	session, _ := identity.CurrentSession(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	insights, err := h.store.TenantInsights(ctx, session.User.ID, tenantID)
+	if err != nil {
+		h.storeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, insights)
+}
+
+func (h *Handler) eventInsights(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := pathID(w, r, "tenantID")
+	if !ok {
+		return
+	}
+	eventID, ok := pathID(w, r, "eventID")
+	if !ok {
+		return
+	}
+	session, _ := identity.CurrentSession(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	insights, err := h.store.EventInsights(ctx, session.User.ID, tenantID, eventID)
+	if err != nil {
+		h.storeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, insights)
 }
 
 // cancelBooking cancels one confirmed booking and puts its seats back on sale.
