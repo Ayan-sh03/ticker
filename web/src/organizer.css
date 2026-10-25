@@ -361,11 +361,13 @@
 .organizer-sales > li { display: grid; gap: var(--space-sm); padding-block: var(--space-lg); border-bottom: 1px solid var(--color-rule); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
 .organizer-sales > li > * { min-width: 0; overflow-wrap: anywhere; }
 .organizer-sales-name { color: var(--color-ink); font-size: var(--text-body); font-weight: 500; }
+.organizer-sales > li[data-status='CANCELLED'] .price { color: var(--color-muted); text-decoration: line-through; }
+.organizer-sales-amount { display: grid; gap: var(--space-xs); justify-items: start; }
 
 @media (min-width: 40rem) {
-  .organizer-details.organizer-sales-summary { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-  .organizer-sales > li { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(7rem, auto); align-items: center; gap: var(--space-xl); }
-  .organizer-sales > li > :last-child { text-align: end; }
+  .organizer-details.organizer-sales-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .organizer-sales > li { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 14rem; align-items: center; gap: var(--space-xl); }
+  .organizer-sales > li > :last-child { text-align: end; justify-items: end; }
 }
 
 @media (min-width: 40rem) {

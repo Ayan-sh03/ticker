@@ -57,6 +57,7 @@ export function EventView({ id, heading, session, checking, selectedIDs, select,
   const seats = inventory.data?.seats ?? [];
   const ownedSeats = seats.filter(seat => ownedIDs.includes(seat.id));
   const occupied = !!hold.pending || hold.hasRecord;
+  const cancelled = hold.booking?.status === 'CANCELLED';
   const selected = seats.filter(seat => selectedIDs.includes(seat.id) && seat.status === 'AVAILABLE');
   const full = selected.length >= maxSeats;
   useEffect(() => { if (event.data) heading.current?.focus(); }, [event.data, heading]);
@@ -102,7 +103,7 @@ export function EventView({ id, heading, session, checking, selectedIDs, select,
             {[...groups].map(([group, rowSeats]) => <div className="seat-group" key={group}>
               <h3>{group}</h3><ul className={list ? 'seat-list' : 'seat-grid'}>{rowSeats.map(seat => {
                 const unavailable = seat.status !== 'AVAILABLE';
-                const yours = ownedIDs.includes(seat.id) && (hold.reservation?.status === 'HELD' || !!hold.booking || !!hold.pending);
+                const yours = ownedIDs.includes(seat.id) && (hold.reservation?.status === 'HELD' || (!!hold.booking && !cancelled) || !!hold.pending);
                 const chosen = !occupied && selected.some(value => value.id === seat.id);
                 const capped = !unavailable && !chosen && !occupied && full;
                 return <li key={seat.id}><button className={`seat ${list ? 'seat-line' : ''} ${yours ? 'seat-owned' : ''} ${capped ? 'seat-capped' : ''}`} data-seat-status={seat.status} disabled={unavailable || !!inventory.error || occupied || capped} aria-pressed={chosen || yours} aria-label={`${seat.label}, ${yours ? hold.booking ? 'your confirmed seat' : 'your reservation' : statuses[seat.status]}${chosen ? ', selected' : ''}${capped ? `, ${maxSeats}-seat limit reached` : ''}`} onClick={() => toggle(seat.id)}>
@@ -119,7 +120,10 @@ export function EventView({ id, heading, session, checking, selectedIDs, select,
             {hold.busy && <p role="status">{hold.pending?.kind === 'reserve' ? 'Reserving…' : hold.pending?.kind === 'confirm' ? 'Confirming…' : hold.pending?.kind === 'cancel' ? 'Cancelling…' : 'Checking reservation…'}</p>}
             {hold.pending && !hold.busy && <p>Your saved {hold.pending.kind === 'reserve' ? 'reservation' : hold.pending.kind === 'confirm' ? 'confirmation' : 'cancellation'} request needs recovery before another action.</p>}
             {occupied && (ownedSeats.length ? <SeatSummary seats={ownedSeats} /> : <p className="selected-seat">Your {owned === 1 ? 'seat' : 'seats'}</p>)}
-            {hold.booking ? <div className="receipt" role="status">
+            {hold.booking && cancelled ? <div className="receipt" role="status">
+              <h3>Booking cancelled</h3><p>The organizer cancelled this booking, and its {seatCount(hold.booking.seat_ids.length)} went back on sale.</p>
+              <dl><dt>Booking reference</dt><dd>{hold.booking.id}</dd>{hold.booking.cancelled_at && <><dt>Cancelled</dt><dd>{new Date(hold.booking.cancelled_at).toLocaleString()}</dd></>}</dl>
+            </div> : hold.booking ? <div className="receipt" role="status">
               <h3>Booking confirmed</h3><p className="price">{total(hold.booking, hold.booking.seat_ids.length)}<small>for {seatCount(hold.booking.seat_ids.length)}</small></p>
               <dl><dt>Booking reference</dt><dd>{hold.booking.id}</dd><dt>Confirmed</dt><dd>{new Date(hold.booking.created_at).toLocaleString()}</dd></dl>
               <p>Keep this reference for your booking.</p>
