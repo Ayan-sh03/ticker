@@ -75,7 +75,7 @@ Four ideas make this safe:
 
 1. **A quick check first.** A read without locks turns away most requests for a seat that is already taken. It is only a shortcut. The real decision comes next.
 2. **Lock, then read again.** A request decides only after it holds every lock it needs. A read from before the lock can be old. A read under the lock cannot.
-3. **One lock order everywhere.** Each code path locks the event, then holds that are past their deadline, then seats by ID. Two requests can never wait for each other in a circle, so they cannot deadlock.
+3. **One lock order everywhere.** Locks always go in one direction: the event, then reservations, then seats by ID. A path can start later in the line (a confirm starts at its reservation), but it never goes back. So two requests can never wait for each other in a circle, and they cannot deadlock.
 4. **The database is the last guard.** Partial unique indexes let each seat have only one active hold, and only one active booking. If the code had a bug and tried to add a second one, the insert fails.
 
 The saved 409 matters too. If B's network drops and B retries with the same request key, B gets the same 409 again, not a new attempt.
@@ -175,7 +175,7 @@ Each promise has a place in the code:
 
 All paths start with `/api`. Each write needs the header `X-Ticker-Request: 1`, and the browser's `Origin` must be the site itself. The UI also sends `X-Ticker-User` with the user ID it expects. If the session cookie belongs to a different user, the API refuses the request. This stops an old tab from acting as a new login.
 
-In the table, `{t}` is a workspace (tenant) ID, `{b}` is a booking ID, and `…` repeats the path before it.
+In the table, `{t}` is a workspace (tenant) ID, `{e}` is an event ID, and `{b}` is a booking ID. In the last row, `…` stands for `/organizer/tenants/{t}/events/{e}`.
 
 | Area | Endpoints |
 |---|---|
@@ -184,7 +184,8 @@ In the table, `{t}` is a workspace (tenant) ID, `{b}` is a booking ID, and `…`
 | Reservations | `POST /reservations` (with `Idempotency-Key`), `GET` and `DELETE /reservations/{id}`, `POST /reservations/{id}/confirm` |
 | Bookings | `GET /bookings/{id}` |
 | Interest | `GET`, `PUT`, `DELETE /events/{id}/interest` |
-| Organizer | `/organizer/tenants/{t}/events` (create, list, read, edit, publish, delete), `…/seats` (read, block), `…/bookings`, `…/holds`, `…/bookings/{b}/cancel`, `…/insights`, `/organizer/tenants/{t}/insights` |
+| Organizer | `GET /organizer/tenants`, `GET` and `POST /organizer/tenants/{t}/events`, `GET /organizer/tenants/{t}/insights` |
+| One event | `GET`, `PUT`, and `DELETE …`, `POST …/publish`, `GET` and `PATCH …/seats`, `GET …/bookings`, `GET …/holds`, `POST …/bookings/{b}/cancel`, `GET …/insights` |
 
 ## Deploy
 
