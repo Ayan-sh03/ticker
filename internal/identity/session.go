@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"runtime"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -23,7 +24,11 @@ var (
 	ErrAccount     = errors.New("an account already uses this email")
 )
 
-const passwordCost = 12
+const (
+	passwordCost = 12
+	// A login waits this long for a hashing slot before it is turned away.
+	passwordWait = time.Second
+)
 
 type User struct {
 	ID          string   `json:"id"`
@@ -48,7 +53,7 @@ func NewService(pool *pgxpool.Pool) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Service{pool: pool, dummyHash: dummy, verifySlots: make(chan struct{}, 4)}, nil
+	return &Service{pool: pool, dummyHash: dummy, verifySlots: make(chan struct{}, passwordSlots())}, nil
 }
 
 func HashPassword(password string) (string, error) {
@@ -63,14 +68,24 @@ func PasswordMatches(hash, password string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 }
 
+// passwordSlots leaves at least half the CPUs for other requests: each bcrypt
+// check keeps one CPU busy, so running more of them at once only slows every
+// request on the instance without finishing logins sooner.
+func passwordSlots() int {
+	return (runtime.GOMAXPROCS(0) + 1) / 2
+}
+
 // passwordSlot bounds concurrent bcrypt work independently of the database pool.
+// A short wait lets a few logins arriving together take turns instead of failing.
 func (s *Service) passwordSlot(ctx context.Context) (func(), error) {
+	timer := time.NewTimer(passwordWait)
+	defer timer.Stop()
 	select {
 	case s.verifySlots <- struct{}{}:
 		return func() { <-s.verifySlots }, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
-	default:
+	case <-timer.C:
 		return nil, ErrBusy
 	}
 }

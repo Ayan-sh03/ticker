@@ -70,30 +70,14 @@ func (s *Store) Reserve(ctx context.Context, userID, key, eventID string, seatID
 	if status != nil {
 		return Result{Status: *status, Body: body}, nil
 	}
-	// Lock order: request key, new reservation, overdue reservations by ascending ID,
-	// seats by ascending ID. Like cancellation and expiration, reservations come before seats.
-	var reservation Reservation
-	var tenantID string
-	err = tx.QueryRow(ctx, `INSERT INTO reservations (tenant_id, event_id, user_id, quantity, expires_at)
-		SELECT tenant_id, id, $2, $3, clock_timestamp() + interval '5 minutes' FROM events
-		WHERE id = $1 AND status = 'PUBLISHED'
-		RETURNING id::text, tenant_id::text, event_id::text, status, created_at, expires_at`, eventID, userID, len(seatIDs)).
-		Scan(&reservation.ID, &tenantID, &reservation.EventID, &reservation.Status, &reservation.CreatedAt, &reservation.ExpiresAt)
-	result := failure(404, "seat_not_found", "every seat must belong to a published event")
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	result := failure(409, "seat_unavailable", "one or more seats are unavailable")
+	taken, err := seatsTaken(ctx, tx, eventID, seatIDs)
+	if err != nil {
 		return Result{}, err
 	}
-	if err == nil {
-		if err := releaseOverdue(ctx, tx, seatIDs); err != nil {
+	if !taken {
+		if result, err = hold(ctx, tx, userID, key, eventID, seatIDs); err != nil {
 			return Result{}, err
-		}
-		if result, err = allocate(ctx, tx, &reservation, tenantID, userID, key, seatIDs); err != nil {
-			return Result{}, err
-		}
-		if result.Status != 201 {
-			if _, err := tx.Exec(ctx, "DELETE FROM reservations WHERE id = $1", reservation.ID); err != nil {
-				return Result{}, err
-			}
 		}
 	}
 	if _, err := tx.Exec(ctx, `UPDATE idempotency_records SET response_status = $3, response_body = $4
@@ -102,6 +86,42 @@ func (s *Store) Reserve(ctx context.Context, userID, key, eventID string, seatID
 	}
 	// A lost commit response is recovered by retrying with this same request key.
 	return result, tx.Commit(ctx)
+}
+
+// seatsTaken reports, without taking locks, whether committed data already shows
+// a requested seat sold, blocked or held on an event that is on sale, so most
+// requests for a taken seat never join its lock queue. An overdue hold counts as
+// free because on Vercel only a reservation releases it. Anything that looks
+// free here is decided again under locks.
+func seatsTaken(ctx context.Context, tx pgx.Tx, eventID string, seatIDs []string) (bool, error) {
+	var taken bool
+	err := tx.QueryRow(ctx, `SELECT count(*) = cardinality($2::uuid[]) AND bool_or(s.status <> 'AVAILABLE' OR EXISTS (
+			SELECT 1 FROM reservation_seats rs JOIN reservations r ON r.id = rs.reservation_id
+			WHERE rs.seat_id = s.id AND rs.released_at IS NULL
+			AND r.status = 'HELD' AND r.expires_at > clock_timestamp()))
+		FROM seats s JOIN events e ON e.id = s.event_id AND e.tenant_id = s.tenant_id
+		WHERE s.event_id = $1 AND s.id = ANY($2::uuid[]) AND e.status = 'PUBLISHED'
+		AND clock_timestamp() >= e.sales_open_at AND clock_timestamp() < e.starts_at`, eventID, seatIDs).Scan(&taken)
+	return taken, err
+}
+
+// hold runs allocate under a savepoint. A request that cannot hold every seat
+// rolls back to it, which releases its locks before the idempotency write and
+// commit, so requests queued on the same seats do not wait for those.
+func hold(ctx context.Context, tx pgx.Tx, userID, key, eventID string, seatIDs []string) (Result, error) {
+	if _, err := tx.Exec(ctx, "SAVEPOINT hold"); err != nil {
+		return Result{}, err
+	}
+	result, err := allocate(ctx, tx, userID, key, eventID, seatIDs)
+	if err != nil {
+		return Result{}, err
+	}
+	if result.Status != 201 {
+		if _, err := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT hold"); err != nil {
+			return Result{}, err
+		}
+	}
+	return result, nil
 }
 
 // releaseOverdue frees expired holds on the requested seats, so expiry does not
@@ -129,7 +149,24 @@ func releaseOverdue(ctx context.Context, tx pgx.Tx, seatIDs []string) error {
 }
 
 // allocate locks every requested seat before deciding, then assigns all of them or none.
-func allocate(ctx context.Context, tx pgx.Tx, reservation *Reservation, tenantID, userID, key string, seatIDs []string) (Result, error) {
+// Lock order: request key, event, overdue reservations by ascending ID, seats by
+// ascending ID. Like cancellation and expiration, reservations come before seats.
+// The new reservation is inserted last, once it is known to succeed; nobody else
+// can see it before commit.
+func allocate(ctx context.Context, tx pgx.Tx, userID, key, eventID string, seatIDs []string) (Result, error) {
+	// The same event lock the reservation insert trigger takes, held before any seat lock.
+	var tenantID string
+	err := tx.QueryRow(ctx, `SELECT tenant_id::text FROM events WHERE id = $1 AND status = 'PUBLISHED' FOR SHARE`, eventID).Scan(&tenantID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return failure(404, "seat_not_found", "every seat must belong to a published event"), nil
+	}
+	if err != nil {
+		return Result{}, err
+	}
+	if err := releaseOverdue(ctx, tx, seatIDs); err != nil {
+		return Result{}, err
+	}
+	reservation := Reservation{EventID: eventID}
 	rows, err := tx.Query(ctx, queries.LockReservationSeats, seatIDs, reservation.EventID)
 	if err != nil {
 		return Result{}, err
@@ -159,8 +196,13 @@ func allocate(ctx context.Context, tx pgx.Tx, reservation *Reservation, tenantID
 	}
 	reservation.SeatIDs = seatIDs
 	reservation.TotalMinor = reservation.PriceMinor * int64(len(seatIDs))
+	// The hold starts once every seat lock is acquired.
+	reservation.CreatedAt = reservation.ServerTime
 	reservation.ExpiresAt = reservation.ServerTime.Add(5 * time.Minute)
-	if _, err := tx.Exec(ctx, `UPDATE reservations SET expires_at = $2 WHERE id = $1`, reservation.ID, reservation.ExpiresAt); err != nil {
+	if err := tx.QueryRow(ctx, `INSERT INTO reservations (tenant_id, event_id, user_id, quantity, created_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id::text, status`,
+		tenantID, eventID, userID, len(seatIDs), reservation.CreatedAt, reservation.ExpiresAt).
+		Scan(&reservation.ID, &reservation.Status); err != nil {
 		return Result{}, err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO reservation_seats (reservation_id, tenant_id, event_id, seat_id)
@@ -170,7 +212,7 @@ func allocate(ctx context.Context, tx pgx.Tx, reservation *Reservation, tenantID
 	if err := audit(ctx, tx, reservation.ID, userID, "", "HELD", "customer_request", key); err != nil {
 		return Result{}, err
 	}
-	return success(201, *reservation), nil
+	return success(201, reservation), nil
 }
 
 func (s *Store) Get(ctx context.Context, userID, id string) (Reservation, error) {
