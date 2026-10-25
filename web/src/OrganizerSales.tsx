@@ -45,7 +45,6 @@ export function OrganizerSales({ tenantID, eventID, userID, heading, onSessionEx
   const rows = denied ? undefined : view === 'bookings' ? list.data?.bookings : list.data?.holds;
   const error = denied ? 'You no longer have access to this organizer workspace.' : event.error ?? list.error;
   const current = denied ? undefined : event.data?.event;
-  const started = current ? Date.parse(current.starts_at) <= Date.now() : true;
 
   // Cancelling is idempotent, so retrying after an unknown outcome is safe.
   async function cancelBooking(booking: Booking) {
@@ -94,7 +93,8 @@ export function OrganizerSales({ tenantID, eventID, userID, heading, onSessionEx
           <div><p className="organizer-sales-name">{row.customer.display_name}</p><p>{row.customer.email}</p></div>
           <div><p>{seats(row.seat_labels)}</p><p>Booked {when(row.created_at)}{row.cancelled_at && ` · Cancelled ${when(row.cancelled_at)}`}</p></div>
           <div className="organizer-sales-amount"><p className="price">{price({ price_minor: row.total_minor, currency: row.currency })}</p>
-            {row.status === 'CANCELLED' ? <p>Cancelled</p> : !started && (confirming === row.id
+            {/* The API decides whether the event has started, by its own clock. */}
+            {row.status === 'CANCELLED' ? <p>Cancelled</p> : (confirming === row.id
               ? <p className="organizer-sales-confirm">Seats go back on sale.{' '}
                 <button className="text-button" disabled={!!cancelling} onClick={() => void cancelBooking(row)}>{cancelling === row.id ? 'Cancelling…' : 'Cancel booking'}</button>{' '}
                 <button className="text-button" disabled={!!cancelling} onClick={() => setConfirming('')}>Keep</button></p>
