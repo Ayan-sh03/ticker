@@ -57,6 +57,8 @@ func Load() (Config, error) {
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL is required")
 	}
+	// Against a 2-CPU database the default of 12 served contended reserves and
+	// mixed traffic as fast as 16 or 48, without queueing 48 deep on a hot seat.
 	if raw := os.Getenv("DB_MAX_CONNS"); raw != "" {
 		value, err := strconv.ParseInt(raw, 10, 32)
 		if err != nil || value < 1 {
