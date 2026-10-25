@@ -444,6 +444,12 @@
 .insight-columns rect { fill: var(--color-accent); }
 .insight-columns figcaption { display: flex; justify-content: space-between; gap: var(--space-md); margin-top: var(--space-xs); color: var(--color-muted); font-size: var(--text-sm); }
 .insight-events { border-top: 1px solid var(--color-rule); }
+.insight-data { margin-top: var(--space-md); font-size: var(--text-sm); }
+.insight-data summary { cursor: pointer; color: var(--color-muted); }
+.insight-data table { width: 100%; margin-top: var(--space-sm); border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.insight-data th, .insight-data td { padding-block: var(--space-xs); border-bottom: 1px solid var(--color-rule); text-align: start; font-weight: 400; }
+.insight-data td { text-align: end; }
+.insight-note { margin-bottom: var(--space-md); color: var(--color-muted); font-size: var(--text-sm); }
 .insight-events > li { display: grid; gap: var(--space-md); padding-block: var(--space-lg); border-bottom: 1px solid var(--color-rule); }
 .insight-events > li > * { min-width: 0; overflow-wrap: anywhere; }
 .insight-events a { color: var(--color-ink); font-weight: 500; }
