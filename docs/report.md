@@ -26,14 +26,14 @@ Many people want the same few seats at the same moment. The system must:
 
 Rules the database enforces on its own:
 
-- **One active owner per seat.** `reservation_seats (seat_id) WHERE released_at IS NULL` and `booking_seats (seat_id) WHERE released_at IS NULL` are partial unique indexes. Even if the locking code had a bug, a second owner could not be inserted.
-- **Seat count matches.** Deferred constraint triggers check that a reservation has exactly `quantity` seats.
+- **One active row per seat, per table.** `reservation_seats (seat_id) WHERE released_at IS NULL` and `booking_seats (seat_id) WHERE released_at IS NULL` are partial unique indexes. A second active hold, or a second active booking, on one seat cannot be inserted, even if the locking code had a bug. Each index guards only its own table. Keeping a hold and a booking for a seat in step is the job of the transaction code, and the audit command checks it.
+- **Seat count matches when a hold is made.** Deferred constraint triggers check, at commit, that a newly inserted reservation has exactly `quantity` seats. They run on insert only; the audit command catches a later mismatch.
 - **History is append-only.** `audit_entries` rejects `UPDATE` and `DELETE`.
 - **A booking keeps its price.** Each booking stores the per-seat price and fee rate it was charged. Separately, the API refuses to change an event's price, currency, or layout after its first reservation.
 
 ## 3. How a seat is won
 
-All writes run in `READ COMMITTED` transactions with short lock timeouts (250 ms for customer writes, 1 s for organizer writes). Row locks decide ownership. Every path takes its locks in the same order, so two requests can never wait on each other in a circle:
+All writes run in `READ COMMITTED` transactions. Customer writes set a 250 ms lock timeout and a 1 s statement timeout. Organizer seat blocking and booking cancellation set a 1 s lock timeout; other organizer writes are bounded only by the request deadline. Row locks decide ownership. Every path takes its locks in the same order, so two requests can never wait on each other in a circle:
 
 | Operation | Lock order |
 |---|---|
@@ -47,7 +47,7 @@ All writes run in `READ COMMITTED` transactions with short lock timeouts (250 ms
 Details that matter:
 
 - **Sorted seat locks.** Two people who want seats {A, B} and {B, A} both lock A first, so one simply waits for the other.
-- **Fast rejection.** Before taking any lock, a reserve request checks without locking whether a requested seat is already taken. Most losing requests stop there.
+- **Fast rejection.** After it claims its request key, and before any event, reservation, or seat lock, a reserve request checks without locking whether a requested seat is already taken. Most losing requests stop there.
 - **Savepoint for losers.** Seats are claimed under a savepoint. A request that loses a seat rolls back to it before writing its idempotency record, so a rejected hold writes no reservation row.
 - **Time from the database.** Deadlines and "has the event started" checks use `clock_timestamp()` after the last lock. A request that waited for a lock cannot carry an old decision past a deadline.
 - **Expiry without a worker.** Any request that needs seats first releases overdue holds on those seats. The worker only makes this faster, which is why the Vercel deployment can run without one.
@@ -74,7 +74,7 @@ Signup sends a six-digit code that is stored hashed in Redis for ten minutes, al
 - reservation status agrees with held seats and bookings, and a cancelled booking has released every seat;
 - booking prices match their event;
 - no hold is expired before its deadline, and no hold stays overdue for long (when a worker runs);
-- each reservation's audit entries form exactly one allowed path, such as `HELD → CONFIRMED → CANCELLED`, by the right actor.
+- each reservation made since the audit trail began has entries that form exactly one allowed path, such as `HELD → CONFIRMED → CANCELLED`, by the right actor. Older reservations have no trail; the command counts them separately and skips their history check.
 
 It prints violations with examples and exits 1. It never repairs data, because a repair would have to guess who owns a seat. CI runs it after seeding a fresh database.
 
@@ -115,12 +115,16 @@ Results after the cache fix (same tests):
 | Test | Metric | Before | After |
 |---|---|---|---|
 | 10,000-seat map | HTTP 503 answers | 13,163 | 0 |
+| 10,000-seat map | requests that timed out or lost the connection | 29 | 35 |
 | 10,000-seat map | database peak CPU | 269% | 131% |
+| 10,000-seat map | API peak memory | 633 MiB | 162 MiB |
+| 1,000-seat map | journeys completed / dropped | 26,846 / 87,549 | 33,385 / 80,349 |
 | 1,000-seat map | mean rate | 165 journeys/s | 205 journeys/s |
 | 1,000-seat map | p95 / p99 | 1,337 / 1,752 ms | 1,050 / 1,279 ms |
+| 1,000-seat map | API peak memory | 61 MiB | 71 MiB |
 | all runs | data rule violations | 0 | 0 |
 
-The 10,000-seat run after the fix stopped when k6 reached its 2 GiB limit. That is a generator limit: the server returned no errors before it. The API stayed under 70 MiB of memory in every test. All numbers come from one shared machine, so they compare runs with each other, not with production hardware.
+These are breakpoint tests: k6 raises the arrival rate past what the stack can serve, so many scheduled journeys are dropped by design. The fix moved the limit, it did not remove it. The 10,000-seat run after the fix did not finish: k6 hit its 2 GiB memory limit and was killed (exit 137), and before that 35 requests timed out or lost their connection. All numbers come from one shared machine, so they compare runs with each other, not with production hardware. The raw results stay local, under the run IDs `ticker-deep-ramp`, `-ramp2`, `-afterlarge`, and `-aftersmall` of 4 October 2026.
 
 ## 9. Trade-offs and limits
 
