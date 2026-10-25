@@ -72,6 +72,9 @@ export interface Booking {
   price_minor: number;
   currency: string;
   created_at: string;
+  // Older stored receipts have no status; an organizer may cancel a booking.
+  status?: 'CONFIRMED' | 'CANCELLED';
+  cancelled_at?: string | null;
 }
 
 export class ApiError extends Error {
