@@ -83,7 +83,7 @@ func Demo(ctx context.Context, pool *pgxpool.Pool, value int64, password string)
 	}
 	slug := fmt.Sprintf("city-concerts-demo-%d", value)
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO tenants (id, slug, name, created_at) VALUES ($1, $2, 'City Concerts', $3)
+		INSERT INTO tenants (id, slug, name, time_zone, created_at) VALUES ($1, $2, 'City Concerts', 'Asia/Kolkata', $3)
 		ON CONFLICT (id) DO NOTHING`, summary.TenantID, slug, createdAt); err != nil {
 		return Summary{}, fmt.Errorf("seed tenant: %w", err)
 	}
