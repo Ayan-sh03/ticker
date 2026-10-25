@@ -29,7 +29,9 @@ func RegisterRoutes(mux *http.ServeMux, store *Store, sessions *identity.Handler
 			fail(http.StatusBadRequest, "invalid_event_id", "event ID must be a UUID")
 			return
 		}
-		if r.Method != http.MethodGet {
+		// Only PUT and DELETE write. GET and HEAD, which Go routes to GET, read.
+		write := r.Method == http.MethodPut || r.Method == http.MethodDelete
+		if write {
 			r.Body = http.MaxBytesReader(w, r.Body, 4096)
 			if body, err := io.ReadAll(r.Body); err != nil || len(body) != 0 {
 				fail(http.StatusBadRequest, "invalid_interest_payload", "interest changes take an empty body")
@@ -41,10 +43,10 @@ func RegisterRoutes(mux *http.ServeMux, store *Store, sessions *identity.Handler
 		defer cancel()
 		interested := r.Method == http.MethodPut
 		var err error
-		if r.Method == http.MethodGet {
-			interested, err = store.Get(ctx, session.User.ID, id.String())
-		} else {
+		if write {
 			err = store.Set(ctx, session.User.ID, id.String(), interested)
+		} else {
+			interested, err = store.Get(ctx, session.User.ID, id.String())
 		}
 		if errors.Is(err, ErrNotFound) {
 			fail(http.StatusNotFound, "event_not_found", "event not found")
