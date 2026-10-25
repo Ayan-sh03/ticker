@@ -65,7 +65,9 @@ export function OrganizerSales({ tenantID, eventID, userID, heading, onSessionEx
         : (rows as Hold[]).map(row => <li key={row.id}>
           <div><p className="organizer-sales-name">{row.customer.display_name}</p><p>{row.customer.email}</p></div>
           <div><p>{seats(row.seat_labels)}</p><p>Held {when(row.created_at)}</p></div>
-          <p>{row.status === 'HELD' ? `Expires ${when(row.expires_at)}` : `${row.status === 'EXPIRED' ? 'Expired' : 'Cancelled'} ${when(row.ended_at ?? row.expires_at)}`}</p>
+          {/* Holds from before the audit trail have no end time; an expired one ended at its deadline. */}
+          <p>{row.status === 'HELD' ? `Expires ${when(row.expires_at)}` : row.status === 'EXPIRED' ? `Expired ${when(row.ended_at ?? row.expires_at)}`
+            : row.ended_at ? `Cancelled ${when(row.ended_at)}` : 'Cancelled Â· time unavailable'}</p>
         </li>)}</ul>}
       {(pages.length > 0 || list.data?.next) && <nav className="pagination" aria-label="Pages">
         <button className="button" disabled={!pages.length} onClick={() => setPages(value => value.slice(0, -1))}>Previous</button>
