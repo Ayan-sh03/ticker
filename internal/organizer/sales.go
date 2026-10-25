@@ -18,16 +18,18 @@ type Customer struct {
 	Email       string `json:"email"`
 }
 
-// Booking is one confirmed purchase as an organizer sees it. PriceMinor is the
-// per-seat price saved on the booking.
+// Booking is one purchase as an organizer sees it: CONFIRMED, or CANCELLED by
+// an organizer. PriceMinor is the per-seat price saved on the booking.
 type Booking struct {
-	ID         string    `json:"id"`
-	CreatedAt  time.Time `json:"created_at"`
-	Customer   Customer  `json:"customer"`
-	SeatLabels []string  `json:"seat_labels"`
-	PriceMinor int64     `json:"price_minor"`
-	TotalMinor int64     `json:"total_minor"`
-	Currency   string    `json:"currency"`
+	ID          string     `json:"id"`
+	Status      string     `json:"status"`
+	CreatedAt   time.Time  `json:"created_at"`
+	CancelledAt *time.Time `json:"cancelled_at"`
+	Customer    Customer   `json:"customer"`
+	SeatLabels  []string   `json:"seat_labels"`
+	PriceMinor  int64      `json:"price_minor"`
+	TotalMinor  int64      `json:"total_minor"`
+	Currency    string     `json:"currency"`
 }
 
 // Hold is a reservation that never became a booking, or one still open.
@@ -43,12 +45,14 @@ type Hold struct {
 	SeatLabels []string   `json:"seat_labels"`
 }
 
+// Bookings and SeatsSold count active bookings only.
 type SalesSummary struct {
-	Bookings       int64 `json:"bookings"`
-	SeatsSold      int64 `json:"seats_sold"`
-	OpenHolds      int64 `json:"open_holds"`
-	ExpiredHolds   int64 `json:"expired_holds"`
-	CancelledHolds int64 `json:"cancelled_holds"`
+	Bookings          int64 `json:"bookings"`
+	CancelledBookings int64 `json:"cancelled_bookings"`
+	SeatsSold         int64 `json:"seats_sold"`
+	OpenHolds         int64 `json:"open_holds"`
+	ExpiredHolds      int64 `json:"expired_holds"`
+	CancelledHolds    int64 `json:"cancelled_holds"`
 }
 
 // Cursor marks the last row of a page; the next page starts after it. Pages run
@@ -91,22 +95,9 @@ func (s *Store) ListBookings(ctx context.Context, userID, tenantID, eventID stri
 	if err != nil {
 		return SalesSummary{}, nil, nil, err
 	}
-	rows, err := tx.Query(ctx, `SELECT b.id::text, b.created_at, u.display_name, u.email,
-		ARRAY(SELECT s.label FROM booking_seats bs JOIN seats s ON s.id = bs.seat_id
-			WHERE bs.booking_id = b.id ORDER BY s.section, s.row_number, s.seat_number),
-		b.price_minor, b.currency
-		FROM bookings b JOIN users u ON u.id = b.user_id
-		WHERE b.tenant_id = $1 AND b.event_id = $2 AND ($4::timestamptz IS NULL OR (b.created_at, b.id) < ($4, $5::uuid))
+	bookings, err := readBookings(ctx, tx, `WHERE b.tenant_id = $1 AND b.event_id = $2
+		AND ($4::timestamptz IS NULL OR (b.created_at, b.id) < ($4, $5::uuid))
 		ORDER BY b.created_at DESC, b.id DESC LIMIT $3`, tenantID, eventID, limit, cursorTime(after), cursorID(after))
-	if err != nil {
-		return SalesSummary{}, nil, nil, err
-	}
-	bookings, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Booking, error) {
-		var b Booking
-		err := row.Scan(&b.ID, &b.CreatedAt, &b.Customer.DisplayName, &b.Customer.Email, &b.SeatLabels, &b.PriceMinor, &b.Currency)
-		b.TotalMinor = b.PriceMinor * int64(len(b.SeatLabels))
-		return b, err
-	})
 	if err != nil {
 		return SalesSummary{}, nil, nil, err
 	}
@@ -134,7 +125,8 @@ func (s *Store) ListHolds(ctx context.Context, userID, tenantID, eventID, state 
 		return SalesSummary{}, nil, nil, err
 	}
 	// Each branch walks reservations_event_status_idx in page order. Expired
-	// holds are released ones plus overdue ones not yet released.
+	// holds are released ones plus overdue ones not yet released. A cancelled
+	// booking's reservation is CANCELLED too, but it is listed as a booking.
 	page := `SELECT id, created_at FROM reservations
 		WHERE tenant_id = $1 AND event_id = $2 AND status = '%s' AND %s
 		AND ($4::timestamptz IS NULL OR (created_at, id) < ($4, $5::uuid))
@@ -146,7 +138,7 @@ func (s *Store) ListHolds(ctx context.Context, userID, tenantID, eventID, state 
 	case "expired":
 		ids = "(" + fmt.Sprintf(page, "EXPIRED", "true") + ") UNION ALL (" + fmt.Sprintf(page, "HELD", "expires_at <= $6") + ")"
 	case "cancelled":
-		ids = fmt.Sprintf(page, "CANCELLED", "true")
+		ids = fmt.Sprintf(page, "CANCELLED", "NOT EXISTS (SELECT 1 FROM bookings b WHERE b.reservation_id = reservations.id)")
 	}
 	rows, err := tx.Query(ctx, `WITH page AS (`+ids+`)
 		SELECT r.id::text, CASE WHEN r.status = 'HELD' AND r.expires_at <= $6 THEN 'EXPIRED' ELSE r.status END,
@@ -202,14 +194,39 @@ func (s *Store) beginSnapshot(ctx context.Context, userID, tenantID, eventID str
 func salesSummary(ctx context.Context, tx pgx.Tx, tenantID, eventID string, now time.Time) (SalesSummary, error) {
 	var s SalesSummary
 	err := tx.QueryRow(ctx, `SELECT
-		(SELECT count(*) FROM bookings WHERE tenant_id = $1 AND event_id = $2),
-		(SELECT count(*) FROM bookings b JOIN booking_seats bs ON bs.booking_id = b.id WHERE b.tenant_id = $1 AND b.event_id = $2),
-		count(*) FILTER (WHERE status = 'HELD' AND expires_at > $3),
-		count(*) FILTER (WHERE status = 'EXPIRED' OR (status = 'HELD' AND expires_at <= $3)),
-		count(*) FILTER (WHERE status = 'CANCELLED')
-		FROM reservations WHERE tenant_id = $1 AND event_id = $2`, tenantID, eventID, now).
-		Scan(&s.Bookings, &s.SeatsSold, &s.OpenHolds, &s.ExpiredHolds, &s.CancelledHolds)
+		(SELECT count(*) FROM bookings WHERE tenant_id = $1 AND event_id = $2 AND cancelled_at IS NULL),
+		(SELECT count(*) FROM bookings WHERE tenant_id = $1 AND event_id = $2 AND cancelled_at IS NOT NULL),
+		(SELECT count(*) FROM bookings b JOIN booking_seats bs ON bs.booking_id = b.id
+			WHERE b.tenant_id = $1 AND b.event_id = $2 AND bs.released_at IS NULL),
+		count(*) FILTER (WHERE r.status = 'HELD' AND r.expires_at > $3),
+		count(*) FILTER (WHERE r.status = 'EXPIRED' OR (r.status = 'HELD' AND r.expires_at <= $3)),
+		count(*) FILTER (WHERE r.status = 'CANCELLED' AND b.id IS NULL)
+		FROM reservations r LEFT JOIN bookings b ON b.reservation_id = r.id
+		WHERE r.tenant_id = $1 AND r.event_id = $2`, tenantID, eventID, now).
+		Scan(&s.Bookings, &s.CancelledBookings, &s.SeatsSold, &s.OpenHolds, &s.ExpiredHolds, &s.CancelledHolds)
 	return s, err
+}
+
+// readBookings reads bookings as organizers see them; where filters and orders them.
+func readBookings(ctx context.Context, tx pgx.Tx, where string, args ...any) ([]Booking, error) {
+	rows, err := tx.Query(ctx, `SELECT b.id::text, b.created_at, b.cancelled_at, u.display_name, u.email,
+		ARRAY(SELECT s.label FROM booking_seats bs JOIN seats s ON s.id = bs.seat_id
+			WHERE bs.booking_id = b.id ORDER BY s.section, s.row_number, s.seat_number),
+		b.price_minor, b.currency
+		FROM bookings b JOIN users u ON u.id = b.user_id `+where, args...)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Booking, error) {
+		var b Booking
+		err := row.Scan(&b.ID, &b.CreatedAt, &b.CancelledAt, &b.Customer.DisplayName, &b.Customer.Email, &b.SeatLabels, &b.PriceMinor, &b.Currency)
+		b.Status = "CONFIRMED"
+		if b.CancelledAt != nil {
+			b.Status = "CANCELLED"
+		}
+		b.TotalMinor = b.PriceMinor * int64(len(b.SeatLabels))
+		return b, err
+	})
 }
 
 func cursorTime(c *Cursor) *time.Time {

@@ -142,7 +142,7 @@ func ReleaseOverdue(ctx context.Context, tx pgx.Tx, seatIDs []string) error {
 		return err
 	}
 	for _, id := range ids {
-		if err := release(ctx, tx, id, "EXPIRED", "", "deadline_passed"); err != nil {
+		if err := release(ctx, tx, id, "HELD", "EXPIRED", "", "deadline_passed"); err != nil {
 			return err
 		}
 	}
@@ -249,7 +249,7 @@ func (s *Store) Cancel(ctx context.Context, userID, id string) (Reservation, err
 		if expired {
 			status, reason = "EXPIRED", "deadline_passed"
 		}
-		if err := release(ctx, tx, id, status, userID, reason); err != nil {
+		if err := release(ctx, tx, id, "HELD", status, userID, reason); err != nil {
 			return Reservation{}, err
 		}
 	}
@@ -288,7 +288,7 @@ func (s *Store) ExpireOne(ctx context.Context) (bool, error) {
 	if !expired {
 		return false, nil
 	}
-	if err := release(ctx, tx, id, "EXPIRED", "", "deadline_passed"); err != nil {
+	if err := release(ctx, tx, id, "HELD", "EXPIRED", "", "deadline_passed"); err != nil {
 		return false, err
 	}
 	return true, tx.Commit(ctx)
@@ -319,16 +319,36 @@ func lockSeats(ctx context.Context, tx pgx.Tx, id string) error {
 	return rows.Err()
 }
 
-// release frees every seat of a held reservation. An empty actor means the system:
-// the worker or an on-demand release during another reservation.
-func release(ctx context.Context, tx pgx.Tx, id, status, actor, reason string) error {
+// CancelBooking ends a confirmed reservation at an organizer's request: its
+// booking is marked cancelled and its seats go back on sale. The caller holds
+// the reservation's row lock; seats are locked next, as in a confirmation.
+func CancelBooking(ctx context.Context, tx pgx.Tx, id, actor string) error {
+	if err := lockSeats(ctx, tx, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE seats SET status = 'AVAILABLE' WHERE status = 'SOLD' AND id IN
+		(SELECT seat_id FROM reservation_seats WHERE reservation_id = $1 AND released_at IS NULL)`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE booking_seats SET released_at = clock_timestamp() WHERE reservation_id = $1 AND released_at IS NULL`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE bookings SET cancelled_at = clock_timestamp(), cancelled_by = $2 WHERE reservation_id = $1`, id, actor); err != nil {
+		return err
+	}
+	return release(ctx, tx, id, "CONFIRMED", "CANCELLED", actor, "organizer_request")
+}
+
+// release frees every seat of a held or confirmed reservation. An empty actor
+// means the system: the worker or an on-demand release during another reservation.
+func release(ctx context.Context, tx pgx.Tx, id, from, status, actor, reason string) error {
 	if _, err := tx.Exec(ctx, "UPDATE reservation_seats SET released_at = clock_timestamp() WHERE reservation_id = $1 AND released_at IS NULL", id); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, "UPDATE reservations SET status = $2 WHERE id = $1", id, status); err != nil {
 		return err
 	}
-	return audit(ctx, tx, id, actor, "HELD", status, reason, "")
+	return audit(ctx, tx, id, actor, from, status, reason, "")
 }
 
 // audit records a transition in the same transaction as the state change, so
