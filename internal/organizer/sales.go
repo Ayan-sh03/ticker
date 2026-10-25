@@ -2,10 +2,16 @@ package organizer
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+var ErrInvalidCursor = errors.New("invalid page cursor")
 
 type Customer struct {
 	DisplayName string `json:"display_name"`
@@ -45,35 +51,55 @@ type SalesSummary struct {
 	CancelledHolds int64 `json:"cancelled_holds"`
 }
 
-// holdStates maps the filter to reservation states. An overdue hold reads as
-// expired before the worker releases it, as customers see it.
-var holdStates = map[string]string{
-	"open":      `r.status = 'HELD' AND r.expires_at > clock_timestamp()`,
-	"expired":   `(r.status = 'EXPIRED' OR (r.status = 'HELD' AND r.expires_at <= clock_timestamp()))`,
-	"cancelled": `r.status = 'CANCELLED'`,
+// Cursor marks the last row of a page; the next page starts after it. Pages run
+// newest first by (created_at, id), so rows added or changed meanwhile never
+// shift later pages.
+type Cursor struct {
+	CreatedAt time.Time
+	ID        string
 }
 
-// ListBookings returns one page of the event's bookings, newest first, with the
-// event's totals.
-func (s *Store) ListBookings(ctx context.Context, userID, tenantID, eventID string, limit, offset int) (SalesSummary, []Booking, error) {
-	tx, err := s.beginAuthorized(ctx, userID, tenantID)
+// ParseCursor reads "<RFC 3339 time>~<uuid>". An empty value means the first page.
+func ParseCursor(value string) (*Cursor, error) {
+	if value == "" {
+		return nil, nil
+	}
+	at, id, ok := strings.Cut(value, "~")
+	var uuid pgtype.UUID
+	createdAt, err := time.Parse(time.RFC3339Nano, at)
+	if !ok || err != nil || len(id) != 36 || uuid.Scan(id) != nil {
+		return nil, ErrInvalidCursor
+	}
+	return &Cursor{CreatedAt: createdAt, ID: uuid.String()}, nil
+}
+
+func (c Cursor) String() string { return c.CreatedAt.UTC().Format(time.RFC3339Nano) + "~" + c.ID }
+
+// HoldStates lists the hold filters. An overdue hold reads as expired before it
+// is released, as customers see it.
+var HoldStates = map[string]bool{"open": true, "expired": true, "cancelled": true}
+
+// ListBookings returns one page of the event's bookings, newest first, and the
+// event's totals, both from one snapshot.
+func (s *Store) ListBookings(ctx context.Context, userID, tenantID, eventID string, limit int, after *Cursor) (SalesSummary, []Booking, *Cursor, error) {
+	tx, now, err := s.beginSnapshot(ctx, userID, tenantID, eventID)
 	if err != nil {
-		return SalesSummary{}, nil, err
+		return SalesSummary{}, nil, nil, err
 	}
 	defer tx.Rollback(context.Background())
-	summary, err := salesSummary(ctx, tx, tenantID, eventID)
+	summary, err := salesSummary(ctx, tx, tenantID, eventID, now)
 	if err != nil {
-		return SalesSummary{}, nil, err
+		return SalesSummary{}, nil, nil, err
 	}
 	rows, err := tx.Query(ctx, `SELECT b.id::text, b.created_at, u.display_name, u.email,
 		ARRAY(SELECT s.label FROM booking_seats bs JOIN seats s ON s.id = bs.seat_id
 			WHERE bs.booking_id = b.id ORDER BY s.section, s.row_number, s.seat_number),
 		b.price_minor, b.currency
 		FROM bookings b JOIN users u ON u.id = b.user_id
-		WHERE b.tenant_id = $1 AND b.event_id = $2
-		ORDER BY b.created_at DESC, b.id DESC LIMIT $3 OFFSET $4`, tenantID, eventID, limit, offset)
+		WHERE b.tenant_id = $1 AND b.event_id = $2 AND ($4::timestamptz IS NULL OR (b.created_at, b.id) < ($4, $5::uuid))
+		ORDER BY b.created_at DESC, b.id DESC LIMIT $3`, tenantID, eventID, limit, cursorTime(after), cursorID(after))
 	if err != nil {
-		return SalesSummary{}, nil, err
+		return SalesSummary{}, nil, nil, err
 	}
 	bookings, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Booking, error) {
 		var b Booking
@@ -82,37 +108,58 @@ func (s *Store) ListBookings(ctx context.Context, userID, tenantID, eventID stri
 		return b, err
 	})
 	if err != nil {
-		return SalesSummary{}, nil, err
+		return SalesSummary{}, nil, nil, err
 	}
-	return summary, bookings, tx.Commit(ctx)
+	var next *Cursor
+	if len(bookings) == limit {
+		last := bookings[len(bookings)-1]
+		next = &Cursor{CreatedAt: last.CreatedAt, ID: last.ID}
+	}
+	return summary, bookings, next, tx.Commit(ctx)
 }
 
-// ListHolds returns one page of the event's holds in one state, newest first.
-func (s *Store) ListHolds(ctx context.Context, userID, tenantID, eventID, state string, limit, offset int) ([]Hold, error) {
-	where, ok := holdStates[state]
-	if !ok {
-		return nil, ErrInvalidEvent
+// ListHolds returns one page of the event's holds in one state, newest first,
+// and the event's totals, both from one snapshot.
+func (s *Store) ListHolds(ctx context.Context, userID, tenantID, eventID, state string, limit int, after *Cursor) (SalesSummary, []Hold, *Cursor, error) {
+	if !HoldStates[state] {
+		return SalesSummary{}, nil, nil, ErrInvalidEvent
 	}
-	tx, err := s.beginAuthorized(ctx, userID, tenantID)
+	tx, now, err := s.beginSnapshot(ctx, userID, tenantID, eventID)
 	if err != nil {
-		return nil, err
+		return SalesSummary{}, nil, nil, err
 	}
 	defer tx.Rollback(context.Background())
-	if err := eventExists(ctx, tx, tenantID, eventID); err != nil {
-		return nil, err
+	summary, err := salesSummary(ctx, tx, tenantID, eventID, now)
+	if err != nil {
+		return SalesSummary{}, nil, nil, err
 	}
-	rows, err := tx.Query(ctx, `SELECT r.id::text,
-		CASE WHEN r.status = 'HELD' AND r.expires_at <= clock_timestamp() THEN 'EXPIRED' ELSE r.status END,
+	// Each branch walks reservations_event_status_idx in page order. Expired
+	// holds are released ones plus overdue ones not yet released.
+	page := `SELECT id, created_at FROM reservations
+		WHERE tenant_id = $1 AND event_id = $2 AND status = '%s' AND %s
+		AND ($4::timestamptz IS NULL OR (created_at, id) < ($4, $5::uuid))
+		ORDER BY created_at DESC, id DESC LIMIT $3`
+	var ids string
+	switch state {
+	case "open":
+		ids = fmt.Sprintf(page, "HELD", "expires_at > $6")
+	case "expired":
+		ids = "(" + fmt.Sprintf(page, "EXPIRED", "true") + ") UNION ALL (" + fmt.Sprintf(page, "HELD", "expires_at <= $6") + ")"
+	case "cancelled":
+		ids = fmt.Sprintf(page, "CANCELLED", "true")
+	}
+	rows, err := tx.Query(ctx, `WITH page AS (`+ids+`)
+		SELECT r.id::text, CASE WHEN r.status = 'HELD' AND r.expires_at <= $6 THEN 'EXPIRED' ELSE r.status END,
 		r.created_at, r.expires_at,
 		(SELECT max(a.created_at) FROM audit_entries a WHERE a.reservation_id = r.id AND a.to_status IN ('EXPIRED', 'CANCELLED')),
 		u.display_name, u.email,
 		ARRAY(SELECT s.label FROM reservation_seats rs JOIN seats s ON s.id = rs.seat_id
 			WHERE rs.reservation_id = r.id ORDER BY s.section, s.row_number, s.seat_number)
-		FROM reservations r JOIN users u ON u.id = r.user_id
-		WHERE r.tenant_id = $1 AND r.event_id = $2 AND `+where+`
-		ORDER BY r.created_at DESC, r.id DESC LIMIT $3 OFFSET $4`, tenantID, eventID, limit, offset)
+		FROM page JOIN reservations r ON r.id = page.id JOIN users u ON u.id = r.user_id
+		ORDER BY r.created_at DESC, r.id DESC LIMIT $3`,
+		tenantID, eventID, limit, cursorTime(after), cursorID(after), now)
 	if err != nil {
-		return nil, err
+		return SalesSummary{}, nil, nil, err
 	}
 	holds, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Hold, error) {
 		var h Hold
@@ -120,34 +167,61 @@ func (s *Store) ListHolds(ctx context.Context, userID, tenantID, eventID, state 
 		return h, err
 	})
 	if err != nil {
-		return nil, err
+		return SalesSummary{}, nil, nil, err
 	}
-	return holds, tx.Commit(ctx)
+	var next *Cursor
+	if len(holds) == limit {
+		last := holds[len(holds)-1]
+		next = &Cursor{CreatedAt: last.CreatedAt, ID: last.ID}
+	}
+	return summary, holds, next, tx.Commit(ctx)
 }
 
-func salesSummary(ctx context.Context, tx pgx.Tx, tenantID, eventID string) (SalesSummary, error) {
-	if err := eventExists(ctx, tx, tenantID, eventID); err != nil {
-		return SalesSummary{}, err
+// beginSnapshot authorizes the organizer and checks the event inside one
+// REPEATABLE READ transaction, so totals and rows agree. It also returns one
+// database time, so a hold cannot count as both open and expired.
+func (s *Store) beginSnapshot(ctx context.Context, userID, tenantID, eventID string) (pgx.Tx, time.Time, error) {
+	tx, err := s.beginAuthorizedWith(ctx, userID, tenantID, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		return nil, time.Time{}, err
 	}
+	var exists bool
+	var now time.Time
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM events WHERE tenant_id = $1 AND id = $2), clock_timestamp()`,
+		tenantID, eventID).Scan(&exists, &now); err != nil {
+		_ = tx.Rollback(context.Background())
+		return nil, time.Time{}, err
+	}
+	if !exists {
+		_ = tx.Rollback(context.Background())
+		return nil, time.Time{}, ErrNotFound
+	}
+	return tx, now, nil
+}
+
+func salesSummary(ctx context.Context, tx pgx.Tx, tenantID, eventID string, now time.Time) (SalesSummary, error) {
 	var s SalesSummary
 	err := tx.QueryRow(ctx, `SELECT
 		(SELECT count(*) FROM bookings WHERE tenant_id = $1 AND event_id = $2),
 		(SELECT count(*) FROM bookings b JOIN booking_seats bs ON bs.booking_id = b.id WHERE b.tenant_id = $1 AND b.event_id = $2),
-		count(*) FILTER (WHERE status = 'HELD' AND expires_at > clock_timestamp()),
-		count(*) FILTER (WHERE status = 'EXPIRED' OR (status = 'HELD' AND expires_at <= clock_timestamp())),
+		count(*) FILTER (WHERE status = 'HELD' AND expires_at > $3),
+		count(*) FILTER (WHERE status = 'EXPIRED' OR (status = 'HELD' AND expires_at <= $3)),
 		count(*) FILTER (WHERE status = 'CANCELLED')
-		FROM reservations WHERE tenant_id = $1 AND event_id = $2`, tenantID, eventID).
+		FROM reservations WHERE tenant_id = $1 AND event_id = $2`, tenantID, eventID, now).
 		Scan(&s.Bookings, &s.SeatsSold, &s.OpenHolds, &s.ExpiredHolds, &s.CancelledHolds)
 	return s, err
 }
 
-func eventExists(ctx context.Context, tx pgx.Tx, tenantID, eventID string) error {
-	var exists bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM events WHERE tenant_id = $1 AND id = $2)`, tenantID, eventID).Scan(&exists); err != nil {
-		return err
+func cursorTime(c *Cursor) *time.Time {
+	if c == nil {
+		return nil
 	}
-	if !exists {
-		return ErrNotFound
+	return &c.CreatedAt
+}
+
+func cursorID(c *Cursor) *string {
+	if c == nil {
+		return nil
 	}
-	return nil
+	return &c.ID
 }

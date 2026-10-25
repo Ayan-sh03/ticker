@@ -345,43 +345,45 @@ func (h *Handler) setSeatStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listBookings(w http.ResponseWriter, r *http.Request) {
-	tenantID, eventID, limit, offset, ok := listParams(w, r)
+	tenantID, eventID, limit, after, ok := listParams(w, r)
 	if !ok {
 		return
 	}
 	session, _ := identity.CurrentSession(r.Context())
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	summary, bookings, err := h.store.ListBookings(ctx, session.User.ID, tenantID, eventID, limit, offset)
+	summary, bookings, next, err := h.store.ListBookings(ctx, session.User.ID, tenantID, eventID, limit, after)
 	if err != nil {
 		h.storeError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"summary": summary, "bookings": bookings, "limit": limit, "offset": offset})
+	writeJSON(w, http.StatusOK, map[string]any{"summary": summary, "bookings": bookings, "next": cursorValue(next)})
 }
 
 func (h *Handler) listHolds(w http.ResponseWriter, r *http.Request) {
-	tenantID, eventID, limit, offset, ok := listParams(w, r)
+	tenantID, eventID, limit, after, ok := listParams(w, r)
 	if !ok {
 		return
 	}
 	state := r.URL.Query().Get("status")
-	if _, known := holdStates[state]; !known || len(r.URL.Query()["status"]) != 1 {
+	if !HoldStates[state] || len(r.URL.Query()["status"]) != 1 {
 		writeError(w, http.StatusBadRequest, "invalid_hold_status", "status must be open, expired, or cancelled")
 		return
 	}
 	session, _ := identity.CurrentSession(r.Context())
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	holds, err := h.store.ListHolds(ctx, session.User.ID, tenantID, eventID, state, limit, offset)
+	summary, holds, next, err := h.store.ListHolds(ctx, session.User.ID, tenantID, eventID, state, limit, after)
 	if err != nil {
 		h.storeError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"holds": holds, "limit": limit, "offset": offset})
+	writeJSON(w, http.StatusOK, map[string]any{"summary": summary, "holds": holds, "next": cursorValue(next)})
 }
 
-func listParams(w http.ResponseWriter, r *http.Request) (tenantID, eventID string, limit, offset int, ok bool) {
+// listParams reads the path IDs, a 1–100 limit, and an optional "after" cursor
+// taken from the previous page's "next" value.
+func listParams(w http.ResponseWriter, r *http.Request) (tenantID, eventID string, limit int, after *Cursor, ok bool) {
 	if tenantID, ok = pathID(w, r, "tenantID"); !ok {
 		return
 	}
@@ -391,11 +393,24 @@ func listParams(w http.ResponseWriter, r *http.Request) (tenantID, eventID strin
 	var err error
 	if limit, err = pageNumber(r, "limit", 20, 1, 100); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_pagination", "limit must be an integer from 1 to 100")
-		return "", "", 0, 0, false
+		return "", "", 0, nil, false
 	}
-	if offset, err = pageNumber(r, "offset", 0, 0, 10000); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_pagination", "offset must be an integer from 0 to 10000")
-		return "", "", 0, 0, false
+	values := r.URL.Query()["after"]
+	if len(values) > 1 {
+		err = ErrInvalidCursor
+	} else if len(values) == 1 {
+		after, err = ParseCursor(values[0])
 	}
-	return tenantID, eventID, limit, offset, true
+	if err != nil || (len(values) == 1 && after == nil) {
+		writeError(w, http.StatusBadRequest, "invalid_pagination", "after must be the next value from the previous page")
+		return "", "", 0, nil, false
+	}
+	return tenantID, eventID, limit, after, true
+}
+
+func cursorValue(c *Cursor) any {
+	if c == nil {
+		return nil
+	}
+	return c.String()
 }

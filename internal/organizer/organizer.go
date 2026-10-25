@@ -174,7 +174,11 @@ func (s *Store) GetEvent(ctx context.Context, userID, tenantID, eventID string) 
 // Keep membership locked through the operation so revocation cannot race a
 // private read or mutation after its authorization check.
 func (s *Store) beginAuthorized(ctx context.Context, userID, tenantID string) (pgx.Tx, error) {
-	tx, err := s.pool.Begin(ctx)
+	return s.beginAuthorizedWith(ctx, userID, tenantID, pgx.TxOptions{})
+}
+
+func (s *Store) beginAuthorizedWith(ctx context.Context, userID, tenantID string, options pgx.TxOptions) (pgx.Tx, error) {
+	tx, err := s.pool.BeginTx(ctx, options)
 	if err != nil {
 		return nil, err
 	}
