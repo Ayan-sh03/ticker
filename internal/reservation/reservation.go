@@ -319,18 +319,32 @@ func lockSeats(ctx context.Context, tx pgx.Tx, id string) error {
 	return rows.Err()
 }
 
+// ErrEventStarted rejects cancelling a booking once its event has started.
+var ErrEventStarted = errors.New("event has started")
+
 // CancelBooking ends a confirmed reservation at an organizer's request: its
 // booking is marked cancelled and its seats go back on sale. The caller holds
-// the reservation's row lock; seats are locked next, as in a confirmation.
+// the event's share lock and the reservation's row lock; seats are locked
+// next, as in a confirmation. The start time is checked after every lock, so a
+// wait cannot carry the cancellation past it.
 func CancelBooking(ctx context.Context, tx pgx.Tx, id, actor string) error {
 	if err := lockSeats(ctx, tx, id); err != nil {
 		return err
+	}
+	var started bool
+	if err := tx.QueryRow(ctx, `SELECT clock_timestamp() >= e.starts_at FROM reservations r
+		JOIN events e ON e.tenant_id = r.tenant_id AND e.id = r.event_id WHERE r.id = $1`, id).Scan(&started); err != nil {
+		return err
+	}
+	if started {
+		return ErrEventStarted
 	}
 	if _, err := tx.Exec(ctx, `UPDATE seats SET status = 'AVAILABLE' WHERE status = 'SOLD' AND id IN
 		(SELECT seat_id FROM reservation_seats WHERE reservation_id = $1 AND released_at IS NULL)`, id); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE booking_seats SET released_at = clock_timestamp() WHERE reservation_id = $1 AND released_at IS NULL`, id); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE booking_seats SET released_at = clock_timestamp()
+		WHERE booking_id = (SELECT id FROM bookings WHERE reservation_id = $1) AND released_at IS NULL`, id); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE bookings SET cancelled_at = clock_timestamp(), cancelled_by = $2 WHERE reservation_id = $1`, id, actor); err != nil {

@@ -11,12 +11,13 @@ import (
 
 var (
 	ErrBookingNotFound = errors.New("booking not found")
-	ErrEventStarted    = errors.New("event has started")
+	ErrEventStarted    = reservation.ErrEventStarted
 )
 
 // CancelBooking cancels a confirmed booking and puts its seats back on sale,
 // until the event starts. Repeating it returns the cancelled booking unchanged.
-// Lock order matches a confirmation: the reservation, then its seats by ID.
+// Lock order matches a reservation: the event's share lock, so a start-date edit
+// cannot run meanwhile, then the reservation, then its seats by ID.
 func (s *Store) CancelBooking(ctx context.Context, userID, tenantID, eventID, bookingID string) (Booking, error) {
 	tx, err := s.beginAuthorized(ctx, userID, tenantID)
 	if err != nil {
@@ -28,9 +29,12 @@ func (s *Store) CancelBooking(ctx context.Context, userID, tenantID, eventID, bo
 		return Booking{}, err
 	}
 	var reservationID, status string
-	err = tx.QueryRow(ctx, `SELECT r.id::text, r.status FROM bookings b JOIN reservations r ON r.id = b.reservation_id
-		WHERE b.tenant_id = $1 AND b.event_id = $2 AND b.id = $3 FOR UPDATE OF r`, tenantID, eventID, bookingID).
-		Scan(&reservationID, &status)
+	err = tx.QueryRow(ctx, `SELECT 1 FROM events WHERE tenant_id = $1 AND id = $2 FOR SHARE`, tenantID, eventID).Scan(new(int))
+	if err == nil {
+		err = tx.QueryRow(ctx, `SELECT r.id::text, r.status FROM bookings b JOIN reservations r ON r.id = b.reservation_id
+			WHERE b.tenant_id = $1 AND b.event_id = $2 AND b.id = $3 FOR UPDATE OF r`, tenantID, eventID, bookingID).
+			Scan(&reservationID, &status)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Booking{}, ErrBookingNotFound
 	}
@@ -38,14 +42,6 @@ func (s *Store) CancelBooking(ctx context.Context, userID, tenantID, eventID, bo
 		return Booking{}, err
 	}
 	if status == "CONFIRMED" {
-		var started bool
-		if err := tx.QueryRow(ctx, `SELECT clock_timestamp() >= starts_at FROM events WHERE tenant_id = $1 AND id = $2`,
-			tenantID, eventID).Scan(&started); err != nil {
-			return Booking{}, err
-		}
-		if started {
-			return Booking{}, ErrEventStarted
-		}
 		if err := reservation.CancelBooking(ctx, tx, reservationID, userID); err != nil {
 			return Booking{}, err
 		}
