@@ -124,10 +124,11 @@ func hold(ctx context.Context, tx pgx.Tx, userID, key, eventID string, seatIDs [
 	return result, nil
 }
 
-// releaseOverdue frees expired holds on the requested seats, so expiry does not
+// ReleaseOverdue frees expired holds on the requested seats, so expiry does not
 // depend on a running worker. A row changed while waiting for its lock is rechecked
-// by PostgreSQL, so a hold confirmed or cancelled meanwhile is skipped.
-func releaseOverdue(ctx context.Context, tx pgx.Tx, seatIDs []string) error {
+// by PostgreSQL, so a hold confirmed or cancelled meanwhile is skipped. It locks
+// reservations, so callers must call it before locking any seat.
+func ReleaseOverdue(ctx context.Context, tx pgx.Tx, seatIDs []string) error {
 	rows, err := tx.Query(ctx, `SELECT r.id::text FROM reservations r
 		WHERE r.status = 'HELD' AND r.expires_at <= clock_timestamp() AND EXISTS (
 			SELECT 1 FROM reservation_seats rs WHERE rs.reservation_id = r.id
@@ -163,7 +164,7 @@ func allocate(ctx context.Context, tx pgx.Tx, userID, key, eventID string, seatI
 	if err != nil {
 		return Result{}, err
 	}
-	if err := releaseOverdue(ctx, tx, seatIDs); err != nil {
+	if err := ReleaseOverdue(ctx, tx, seatIDs); err != nil {
 		return Result{}, err
 	}
 	reservation := Reservation{EventID: eventID}
