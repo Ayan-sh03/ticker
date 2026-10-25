@@ -1,0 +1,94 @@
+# Checks every pull request and push to main without tests, as AGENTS.md asks:
+# formatting, static analysis, builds, Compose validation, migrations up and
+# down, the demo seed, and the read-only invariant audit.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - name: Formatting
+        run: |
+          unformatted=$(gofmt -l cmd internal db/queries)
+          if [ -n "$unformatted" ]; then echo "Run gofmt on: $unformatted"; exit 1; fi
+      - name: Static analysis
+        run: go vet ./...
+      - name: Build
+        run: go build ./...
+
+  web:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: Type check and build
+        run: npm run build
+
+  compose:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Validate Compose
+        run: docker compose --profile tools --profile observability config --quiet
+      - name: Build images
+        run: docker compose --profile tools build api worker web seed audit
+
+  database:
+    runs-on: ubuntu-24.04
+    services:
+      db:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: ticker
+          POSTGRES_USER: ticker
+          POSTGRES_PASSWORD: ticker_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ticker -d ticker"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      # Throwaway CI credentials for a database that lives only for this job.
+      DATABASE_URL: postgres://ticker:ticker_ci@localhost:5432/ticker?sslmode=disable
+      DEMO_PASSWORD: ci-demo-password
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - name: Migrate up, all the way down, and up again
+        run: |
+          migrate() {
+            docker run --rm --network host -v "$PWD/db/migrations:/migrations:ro" \
+              migrate/migrate:v4.19.1 -path=/migrations -database="$DATABASE_URL" "$@"
+          }
+          migrate up
+          migrate down -all
+          migrate up
+      - name: Seed the demo twice
+        run: go run ./cmd/seed && go run ./cmd/seed
+      - name: Audit invariants
+        run: go run ./cmd/audit

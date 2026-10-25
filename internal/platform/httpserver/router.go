@@ -13,6 +13,7 @@ import (
 	"ticker/internal/booking"
 	"ticker/internal/catalog"
 	"ticker/internal/identity"
+	"ticker/internal/interest"
 	"ticker/internal/organizer"
 	"ticker/internal/platform/ratelimit"
 	"ticker/internal/reservation"
@@ -45,6 +46,7 @@ func Router(pool *pgxpool.Pool, logger *slog.Logger, options identity.Options, m
 	organizer.RegisterRoutes(mux, organizer.NewStore(pool), identityHandler, logger)
 	reservation.RegisterRoutes(mux, reservation.NewStore(pool), identityHandler, limiter, logger)
 	booking.RegisterRoutes(mux, booking.NewStore(pool), identityHandler, logger)
+	interest.RegisterRoutes(mux, interest.NewStore(pool), identityHandler, logger)
 	return limiter.Middleware(mux), nil
 }
 

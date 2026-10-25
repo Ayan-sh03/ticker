@@ -34,6 +34,9 @@ func RegisterRoutes(mux *http.ServeMux, store *Store, sessions *identity.Handler
 	mux.Handle("PATCH /organizer/tenants/{tenantID}/events/{eventID}/seats", sessions.RequireUser(http.HandlerFunc(h.setSeatStatus)))
 	mux.Handle("GET /organizer/tenants/{tenantID}/events/{eventID}/bookings", sessions.RequireUser(http.HandlerFunc(h.listBookings)))
 	mux.Handle("GET /organizer/tenants/{tenantID}/events/{eventID}/holds", sessions.RequireUser(http.HandlerFunc(h.listHolds)))
+	mux.Handle("POST /organizer/tenants/{tenantID}/events/{eventID}/bookings/{bookingID}/cancel", sessions.RequireUser(http.HandlerFunc(h.cancelBooking)))
+	mux.Handle("GET /organizer/tenants/{tenantID}/insights", sessions.RequireUser(http.HandlerFunc(h.tenantInsights)))
+	mux.Handle("GET /organizer/tenants/{tenantID}/events/{eventID}/insights", sessions.RequireUser(http.HandlerFunc(h.eventInsights)))
 }
 
 func (h *Handler) listTenants(w http.ResponseWriter, r *http.Request) {
@@ -242,6 +245,10 @@ func (h *Handler) storeError(w http.ResponseWriter, r *http.Request, err error) 
 		writeError(w, http.StatusNotFound, "seat_not_found", "every seat must belong to this event")
 	case errors.Is(err, ErrHasReservations):
 		writeError(w, http.StatusConflict, "event_has_reservations", "events with reservation history cannot be deleted")
+	case errors.Is(err, ErrBookingNotFound):
+		writeError(w, http.StatusNotFound, "booking_not_found", "booking not found for this event")
+	case errors.Is(err, ErrEventStarted):
+		writeError(w, http.StatusConflict, "event_started", "bookings cannot be cancelled once the event has started")
 	default:
 		h.logger.Error("organizer request failed", "path", r.URL.Path, "error", err)
 		writeError(w, http.StatusServiceUnavailable, "organizer_unavailable", "organizer service is temporarily unavailable")
@@ -252,7 +259,7 @@ func pathID(w http.ResponseWriter, r *http.Request, name string) (string, bool) 
 	value := r.PathValue(name)
 	var id pgtype.UUID
 	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' || id.Scan(value) != nil {
-		writeError(w, http.StatusBadRequest, "invalid_path_id", "tenant and event IDs must be UUIDs")
+		writeError(w, http.StatusBadRequest, "invalid_path_id", "path IDs must be UUIDs")
 		return "", false
 	}
 	return id.String(), true
@@ -379,6 +386,73 @@ func (h *Handler) listHolds(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"summary": summary, "holds": holds, "next": cursorValue(next)})
+}
+
+func (h *Handler) tenantInsights(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := pathID(w, r, "tenantID")
+	if !ok {
+		return
+	}
+	session, _ := identity.CurrentSession(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	insights, err := h.store.TenantInsights(ctx, session.User.ID, tenantID)
+	if err != nil {
+		h.storeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, insights)
+}
+
+func (h *Handler) eventInsights(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := pathID(w, r, "tenantID")
+	if !ok {
+		return
+	}
+	eventID, ok := pathID(w, r, "eventID")
+	if !ok {
+		return
+	}
+	session, _ := identity.CurrentSession(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	insights, err := h.store.EventInsights(ctx, session.User.ID, tenantID, eventID)
+	if err != nil {
+		h.storeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, insights)
+}
+
+// cancelBooking cancels one confirmed booking and puts its seats back on sale.
+func (h *Handler) cancelBooking(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := pathID(w, r, "tenantID")
+	if !ok {
+		return
+	}
+	eventID, ok := pathID(w, r, "eventID")
+	if !ok {
+		return
+	}
+	bookingID, ok := pathID(w, r, "bookingID")
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	defer r.Body.Close()
+	if body, err := io.ReadAll(r.Body); err != nil || len(body) != 0 {
+		writeError(w, http.StatusBadRequest, "invalid_cancellation_payload", "cancellation requires an empty body")
+		return
+	}
+	session, _ := identity.CurrentSession(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	booking, err := h.store.CancelBooking(ctx, session.User.ID, tenantID, eventID, bookingID)
+	if err != nil {
+		h.storeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"booking": booking})
 }
 
 // listParams reads the path IDs, a 1–100 limit, and an optional "after" cursor

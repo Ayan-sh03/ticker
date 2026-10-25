@@ -1,5 +1,5 @@
-import { useEffect, useState, type RefObject } from 'react';
-import { date, price, useResource, type Event, type Seat, type Session } from './api';
+import { useEffect, useRef, useState, type RefObject } from 'react';
+import { ApiError, date, price, request, useResource, type Event, type Seat, type Session } from './api';
 import { ErrorMessage } from './Feedback';
 import { maxSeats, seatConflict, useReservation } from './useReservation';
 
@@ -38,6 +38,48 @@ function SeatSummary({ seats }: { seats: Seat[] }) {
   return <ul className="seat-summary">{seats.map(seat => <li key={seat.id} className="selected-seat">Seat {seat.label}<small>{seat.section} · Row {seat.row_number}</small></li>)}</ul>;
 }
 
+// Signed-in customers can mark interest. Requests belong to one event and
+// account; a change of either aborts them, so a stale reply (even a 401)
+// cannot touch the newer session.
+function Interest({ eventID, userID, onSessionExpired }: { eventID: string; userID: string; onSessionExpired: () => void }) {
+  const [interested, setInterested] = useState<boolean>();
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<'' | 'load' | 'forbidden' | 'save'>('');
+  const [attempt, setAttempt] = useState(0);
+  const writes = useRef<AbortController>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    setInterested(undefined); setFailure('');
+    request<{ interested: boolean }>(`/events/${eventID}/interest`, { signal: controller.signal, headers: { 'X-Ticker-User': userID } })
+      .then(result => { if (!controller.signal.aborted) setInterested(result.interested); })
+      .catch(reason => {
+        if (controller.signal.aborted) return;
+        if (reason instanceof ApiError && reason.status === 401) onSessionExpired();
+        else setFailure(reason instanceof ApiError && reason.status === 403 ? 'forbidden' : 'load');
+      });
+    return () => { controller.abort(); writes.current?.abort(); writes.current = null; setBusy(false); };
+  }, [eventID, userID, attempt]);
+  async function toggle() {
+    writes.current?.abort();
+    const controller = new AbortController();
+    writes.current = controller;
+    setBusy(true); setFailure('');
+    try {
+      const result = await request<{ interested: boolean }>(`/events/${eventID}/interest`, { method: interested ? 'DELETE' : 'PUT', signal: controller.signal, headers: { 'X-Ticker-User': userID } });
+      if (!controller.signal.aborted) setInterested(result.interested);
+    } catch (reason) {
+      if (controller.signal.aborted) return;
+      if (reason instanceof ApiError && reason.status === 401) onSessionExpired(); else setFailure('save');
+    } finally { if (writes.current === controller) { writes.current = null; setBusy(false); } }
+  }
+  if (interested === undefined) return <p className="interest">{failure === 'forbidden' ? <span className="error" role="alert">Interest is not available for this account.</span>
+    : failure ? <><span className="error" role="alert">Your interest could not be loaded.</span><button className="button" onClick={() => setAttempt(value => value + 1)}>Retry</button></>
+    : <span className="loading" role="status">Checking interest…</span>}</p>;
+  return <p className="interest"><button className="button" aria-pressed={interested} disabled={busy} onClick={() => void toggle()}>
+    {interested && <span aria-hidden="true">✓</span>}Interested</button>
+    {failure === 'save' && <span className="error" role="alert">Your interest could not be saved. Try again.</span>}</p>;
+}
+
 export function EventView({ id, heading, session, checking, selectedIDs, select, onLogin, onSessionExpired }: {
   id: string; heading: RefObject<HTMLHeadingElement | null>; session: Session | null;
   checking: boolean; onLogin: () => void; onSessionExpired: () => void;
@@ -57,6 +99,7 @@ export function EventView({ id, heading, session, checking, selectedIDs, select,
   const seats = inventory.data?.seats ?? [];
   const ownedSeats = seats.filter(seat => ownedIDs.includes(seat.id));
   const occupied = !!hold.pending || hold.hasRecord;
+  const cancelled = hold.booking?.status === 'CANCELLED';
   const selected = seats.filter(seat => selectedIDs.includes(seat.id) && seat.status === 'AVAILABLE');
   const full = selected.length >= maxSeats;
   useEffect(() => { if (event.data) heading.current?.focus(); }, [event.data, heading]);
@@ -87,7 +130,8 @@ export function EventView({ id, heading, session, checking, selectedIDs, select,
     {event.error && <ErrorMessage message={event.error} retry={event.retry} />}
     {!event.data && !event.error && <p className="loading" role="status">Loading event…</p>}
     {event.data && <>
-      <div className="page-heading"><p className="eyebrow">{date(event.data.event)}</p><h1 ref={heading} tabIndex={-1}>{event.data.event.title}</h1><p>{event.data.event.venue_name}</p></div>
+      <div className="page-heading"><p className="eyebrow">{date(event.data.event)}</p><h1 ref={heading} tabIndex={-1}>{event.data.event.title}</h1><p>{event.data.event.venue_name}</p>
+        {session && <Interest eventID={event.data.event.id} userID={session.user.id} onSessionExpired={onSessionExpired} />}</div>
       <div className="event-layout">
         <section className="seat-panel" aria-labelledby="seat-heading">
           <div className="section-heading"><div><h2 id="seat-heading">Choose seats</h2><p>{occupied ? 'Your reservation appears in your selection.'
@@ -102,7 +146,7 @@ export function EventView({ id, heading, session, checking, selectedIDs, select,
             {[...groups].map(([group, rowSeats]) => <div className="seat-group" key={group}>
               <h3>{group}</h3><ul className={list ? 'seat-list' : 'seat-grid'}>{rowSeats.map(seat => {
                 const unavailable = seat.status !== 'AVAILABLE';
-                const yours = ownedIDs.includes(seat.id) && (hold.reservation?.status === 'HELD' || !!hold.booking || !!hold.pending);
+                const yours = ownedIDs.includes(seat.id) && (hold.reservation?.status === 'HELD' || (!!hold.booking && !cancelled) || !!hold.pending);
                 const chosen = !occupied && selected.some(value => value.id === seat.id);
                 const capped = !unavailable && !chosen && !occupied && full;
                 return <li key={seat.id}><button className={`seat ${list ? 'seat-line' : ''} ${yours ? 'seat-owned' : ''} ${capped ? 'seat-capped' : ''}`} data-seat-status={seat.status} disabled={unavailable || !!inventory.error || occupied || capped} aria-pressed={chosen || yours} aria-label={`${seat.label}, ${yours ? hold.booking ? 'your confirmed seat' : 'your reservation' : statuses[seat.status]}${chosen ? ', selected' : ''}${capped ? `, ${maxSeats}-seat limit reached` : ''}`} onClick={() => toggle(seat.id)}>
@@ -119,7 +163,11 @@ export function EventView({ id, heading, session, checking, selectedIDs, select,
             {hold.busy && <p role="status">{hold.pending?.kind === 'reserve' ? 'Reserving…' : hold.pending?.kind === 'confirm' ? 'Confirming…' : hold.pending?.kind === 'cancel' ? 'Cancelling…' : 'Checking reservation…'}</p>}
             {hold.pending && !hold.busy && <p>Your saved {hold.pending.kind === 'reserve' ? 'reservation' : hold.pending.kind === 'confirm' ? 'confirmation' : 'cancellation'} request needs recovery before another action.</p>}
             {occupied && (ownedSeats.length ? <SeatSummary seats={ownedSeats} /> : <p className="selected-seat">Your {owned === 1 ? 'seat' : 'seats'}</p>)}
-            {hold.booking ? <div className="receipt" role="status">
+            {hold.booking && cancelled ? <div className="receipt" role="status">
+              <h3>Booking cancelled</h3><p className="price">{total(hold.booking, hold.booking.seat_ids.length)}<small>for {seatCount(hold.booking.seat_ids.length)}, cancelled</small></p>
+              <p>The organizer cancelled this booking, and its seats went back on sale.</p>
+              <dl><dt>Booking reference</dt><dd>{hold.booking.id}</dd>{hold.booking.cancelled_at && <><dt>Cancelled</dt><dd>{new Date(hold.booking.cancelled_at).toLocaleString()}</dd></>}</dl>
+            </div> : hold.booking ? <div className="receipt" role="status">
               <h3>Booking confirmed</h3><p className="price">{total(hold.booking, hold.booking.seat_ids.length)}<small>for {seatCount(hold.booking.seat_ids.length)}</small></p>
               <dl><dt>Booking reference</dt><dd>{hold.booking.id}</dd><dt>Confirmed</dt><dd>{new Date(hold.booking.created_at).toLocaleString()}</dd></dl>
               <p>Keep this reference for your booking.</p>

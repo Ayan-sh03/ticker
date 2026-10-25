@@ -3,6 +3,7 @@ import { ApiError, date, price, request, type OrganizerEvent, type Session, type
 import { usePrivateResource } from './usePrivateResource';
 import { OrganizerSeats } from './OrganizerSeats';
 import { OrganizerSales } from './OrganizerSales';
+import { EventInsights, TenantInsights } from './OrganizerInsights';
 import { ErrorMessage } from './Feedback';
 import { OrganizerForm } from './OrganizerForm';
 import { OrganizerEditForm } from './OrganizerEditForm';
@@ -45,8 +46,8 @@ function Workspace({ route, session, heading, onSessionExpired }: Omit<Props, 'c
     <p className="organizer-empty">You can still browse events and book a seat.</p>
   </>;
   const tenant = tenantID ? data.tenants.find(item => item.id === tenantID) : data.tenants[0];
-  const view = extra === 'seats' || extra === 'bookings' ? extra : undefined;
-  if (!tenant || (extra && !view) || (target && target !== 'new' && !uuid.test(target)) || (view && !uuid.test(target))) return <>
+  const view = extra === 'seats' || extra === 'bookings' || extra === 'insights' ? extra : undefined;
+  if (!tenant || (extra && !view) || (target && target !== 'new' && target !== 'insights' && !uuid.test(target)) || (view && !uuid.test(target))) return <>
     <a className="back-link" href="#organizer">← Organizer</a>
     <div className="page-heading"><h1 ref={heading} tabIndex={-1}>Workspace unavailable</h1><p>This workspace or event is unavailable to your account.</p></div>
   </>;
@@ -59,12 +60,15 @@ function Workspace({ route, session, heading, onSessionExpired }: Omit<Props, 'c
           options={data.tenants.map(item => ({ value: item.id, label: item.name }))}
           onChange={value => { location.hash = `organizer/${value}`; }} />
       </div>
-      {!target && <a className="button button-solid" href={`#${base}/new`}>New event <span aria-hidden="true">↗</span></a>}
+      {!target && <div className="form-actions"><a className="button" href={`#${base}/insights`}>Insights <span aria-hidden="true">↗</span></a>
+        <a className="button button-solid" href={`#${base}/new`}>New event <span aria-hidden="true">↗</span></a></div>}
     </div>
     {target === 'new' ? <>
       <div className="page-heading"><h1 ref={heading} tabIndex={-1}>New event</h1><p>Create a private draft for {tenant.name}.</p></div>
       <OrganizerForm userID={session.user.id} tenantID={tenant.id} onSessionExpired={onSessionExpired} />
-    </> : view === 'seats' ? <OrganizerSeats tenantID={tenant.id} eventID={target} userID={session.user.id} heading={heading} onSessionExpired={onSessionExpired} />
+    </> : target === 'insights' ? <TenantInsights tenantID={tenant.id} tenantName={tenant.name} userID={session.user.id} heading={heading} onSessionExpired={onSessionExpired} />
+      : view === 'insights' ? <EventInsights tenantID={tenant.id} eventID={target} userID={session.user.id} heading={heading} onSessionExpired={onSessionExpired} />
+      : view === 'seats' ? <OrganizerSeats tenantID={tenant.id} eventID={target} userID={session.user.id} heading={heading} onSessionExpired={onSessionExpired} />
       : view === 'bookings' ? <OrganizerSales tenantID={tenant.id} eventID={target} userID={session.user.id} heading={heading} onSessionExpired={onSessionExpired} />
       : target ? <EventDetail tenantID={tenant.id} eventID={target} userID={session.user.id} heading={heading} onSessionExpired={onSessionExpired} />
       : <EventList tenant={tenant} userID={session.user.id} heading={heading} onSessionExpired={onSessionExpired} />}
@@ -209,7 +213,7 @@ function EventDetail({ tenantID, eventID, userID, heading, onSessionExpired }: {
         {error && <p className="error" role="alert">{error}</p>}
         <div className="form-actions"><button className="button button-solid" disabled={pending || confirmDelete || deleteNeedsRecheck} onClick={() => void publish()}>{pending ? confirmDelete ? 'Deleting…' : 'Publishing…' : uncertain ? 'Retry publication' : 'Publish event'}</button>
           {uncertain && <button className="button" disabled={pending} onClick={recheck}>Recheck event</button>}</div>
-      </div> : <div className="organizer-confirm"><p>{event.price_layout_editable ? 'You can edit price, currency, and the seat layout until the first reservation.' : 'Price, currency, and the seat layout are fixed after the first reservation.'}</p><div className="form-actions"><a className="button button-solid" href={`#organizer/${tenantID}/${event.id}/seats`}>Manage seats <span aria-hidden="true">↗</span></a><a className="button" href={`#organizer/${tenantID}/${event.id}/bookings`}>Bookings <span aria-hidden="true">↗</span></a><a className="button" href={`#${event.id}`}>View customer page <span aria-hidden="true">↗</span></a></div></div>}
+      </div> : <div className="organizer-confirm"><p>{event.price_layout_editable ? 'You can edit price, currency, and the seat layout until the first reservation.' : 'Price, currency, and the seat layout are fixed after the first reservation.'}</p><div className="form-actions"><a className="button button-solid" href={`#organizer/${tenantID}/${event.id}/seats`}>Manage seats <span aria-hidden="true">↗</span></a><a className="button" href={`#organizer/${tenantID}/${event.id}/bookings`}>Bookings <span aria-hidden="true">↗</span></a><a className="button" href={`#organizer/${tenantID}/${event.id}/insights`}>Insights <span aria-hidden="true">↗</span></a><a className="button" href={`#${event.id}`}>View customer page <span aria-hidden="true">↗</span></a></div></div>}
     </>)}
   </>;
 }

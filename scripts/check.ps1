@@ -18,7 +18,8 @@ try {
 
     Push-Location web
     try {
-        npm.cmd run build
+        # npm.cmd avoids the npm.ps1 shim that execution policies block on Windows.
+        if ($env:OS -eq 'Windows_NT') { npm.cmd run build } else { npm run build }
         if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed. Run npm ci in web first.' }
     }
     finally {

@@ -64,9 +64,12 @@ func (s *Store) Confirm(ctx context.Context, userID, key, id string) (Result, er
 		result = failure(409, "reservation_not_confirmable", "reservation is no longer confirmable")
 		if status == "HELD" && now.Before(expiresAt) && ownsSeats {
 			var bookingID string
-			if err := tx.QueryRow(ctx, `INSERT INTO bookings (tenant_id, event_id, reservation_id, user_id, price_minor, currency)
-                SELECT r.tenant_id, r.event_id, r.id, r.user_id, e.price_minor, e.currency
+			// The booking keeps the fee rate in force now, so later rate changes affect only new bookings.
+			if err := tx.QueryRow(ctx, `INSERT INTO bookings (tenant_id, event_id, reservation_id, user_id, price_minor, currency, fee_bps)
+                SELECT r.tenant_id, r.event_id, r.id, r.user_id, e.price_minor, e.currency,
+                    coalesce(t.fee_bps, (SELECT fee_bps FROM platform_settings))
                 FROM reservations r JOIN events e ON e.id = r.event_id AND e.tenant_id = r.tenant_id
+                JOIN tenants t ON t.id = r.tenant_id
                 WHERE r.id = $1 RETURNING id::text`, id).Scan(&bookingID); err != nil {
 				return Result{}, err
 			}

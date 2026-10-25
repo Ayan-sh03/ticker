@@ -141,3 +141,5 @@ main.content { flex: 1; max-width: none; margin: 0; padding: var(--space-2xl) 0 
   .button, .seat { transition: none; }
   .button:active:not(:disabled), .seat:active:not(:disabled) { transform: none; }
 }
+.interest { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-md); margin-top: var(--space-lg); }
+.interest .button[aria-pressed='true'] { border-color: var(--color-ink); }
