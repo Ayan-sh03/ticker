@@ -60,13 +60,13 @@ func checks(o Options) (run, skipped []Check) {
 		{Name: "seat_double_owned", Rule: "A seat has at most one active hold or confirmed owner.", query: `
 			SELECT seat_id::text FROM reservation_seats WHERE released_at IS NULL
 			GROUP BY seat_id HAVING count(*) > 1`},
-		{Name: "seat_double_booked", Rule: "A seat appears in at most one booking.", query: `
-			SELECT seat_id::text FROM booking_seats GROUP BY seat_id HAVING count(*) > 1`},
-		{Name: "sold_without_booking", Rule: "Every SOLD seat belongs to a booking.", query: `
+		{Name: "seat_double_booked", Rule: "A seat appears in at most one active booking.", query: `
+			SELECT seat_id::text FROM booking_seats WHERE released_at IS NULL GROUP BY seat_id HAVING count(*) > 1`},
+		{Name: "sold_without_booking", Rule: "Every SOLD seat belongs to an active booking.", query: `
 			SELECT s.id::text FROM seats s
-			WHERE s.status = 'SOLD' AND NOT EXISTS (SELECT 1 FROM booking_seats b WHERE b.seat_id = s.id)`},
-		{Name: "booked_not_sold", Rule: "Every booked seat is SOLD.", query: `
-			SELECT DISTINCT b.seat_id::text FROM booking_seats b JOIN seats s ON s.id = b.seat_id WHERE s.status <> 'SOLD'`},
+			WHERE s.status = 'SOLD' AND NOT EXISTS (SELECT 1 FROM booking_seats b WHERE b.seat_id = s.id AND b.released_at IS NULL)`},
+		{Name: "booked_not_sold", Rule: "Every seat of an active booking is SOLD.", query: `
+			SELECT b.seat_id::text FROM booking_seats b JOIN seats s ON s.id = b.seat_id WHERE b.released_at IS NULL AND s.status <> 'SOLD'`},
 		{Name: "blocked_seat_held", Rule: "A BLOCKED seat is never held.", query: `
 			SELECT s.id::text FROM seats s WHERE s.status = 'BLOCKED' AND EXISTS (
 				SELECT 1 FROM reservation_seats rs WHERE rs.seat_id = s.id AND rs.released_at IS NULL)`},
@@ -81,8 +81,12 @@ func checks(o Options) (run, skipped []Check) {
 		{Name: "confirmed_without_booking", Rule: "Every confirmed reservation has a booking.", query: `
 			SELECT r.id::text FROM reservations r
 			WHERE r.status = 'CONFIRMED' AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.reservation_id = r.id)`},
-		{Name: "booking_without_confirmation", Rule: "Every booking's reservation is confirmed.", query: `
-			SELECT b.id::text FROM bookings b JOIN reservations r ON r.id = b.reservation_id WHERE r.status <> 'CONFIRMED'`},
+		{Name: "booking_without_confirmation", Rule: "An active booking's reservation is confirmed; a cancelled booking's is cancelled.", query: `
+			SELECT b.id::text FROM bookings b JOIN reservations r ON r.id = b.reservation_id
+			WHERE r.status <> CASE WHEN b.cancelled_at IS NULL THEN 'CONFIRMED' ELSE 'CANCELLED' END`},
+		{Name: "booking_release_mismatch", Rule: "An active booking owns all its seats; a cancelled booking has released them all.", query: `
+			SELECT DISTINCT b.id::text FROM bookings b JOIN booking_seats bs ON bs.booking_id = b.id
+			WHERE (b.cancelled_at IS NULL) <> (bs.released_at IS NULL)`},
 		{Name: "booking_seats_mismatch", Rule: "A booking covers exactly its reservation's seats.", query: `
 			SELECT b.id::text FROM bookings b WHERE EXISTS (
 				(SELECT seat_id FROM reservation_seats WHERE reservation_id = b.reservation_id
@@ -100,20 +104,23 @@ func checks(o Options) (run, skipped []Check) {
 			SELECT r.id::text FROM reservations r
 			JOIN audit_entries a ON a.reservation_id = r.id AND a.to_status = 'EXPIRED'
 			WHERE a.created_at < r.expires_at`},
-		{Name: "audit_history_mismatch", Rule: "Each tracked reservation has one HELD entry, then one entry for its final status.", query: `
+		{Name: "audit_history_mismatch", Rule: "Each tracked reservation's entries, in order, are the one path to its status: held, then confirmed, expired, or cancelled; a cancelled booking was confirmed first.", query: `
 			WITH ` + tracked + `
 			SELECT t.id::text FROM tracked t
-			CROSS JOIN LATERAL (SELECT
-				count(*) FILTER (WHERE to_status = 'HELD') AS holds,
-				count(*) FILTER (WHERE to_status <> 'HELD') AS ends,
-				coalesce(bool_and(to_status = 'HELD' OR to_status = t.status), true) AS ends_match,
-				coalesce(max(id) FILTER (WHERE to_status = 'HELD') < min(id) FILTER (WHERE to_status <> 'HELD'), true) AS ordered
+			CROSS JOIN LATERAL (SELECT string_agg(coalesce(from_status, '') || '>' || to_status, ',' ORDER BY id) AS path
 				FROM audit_entries WHERE reservation_id = t.id) h
-			WHERE h.holds <> 1 OR h.ends <> CASE WHEN t.status = 'HELD' THEN 0 ELSE 1 END OR NOT h.ends_match OR NOT h.ordered`},
-		{Name: "audit_actor_mismatch", Rule: "Customers hold, confirm, and cancel their own reservations; only the system expires them.", query: `
+			WHERE h.path IS DISTINCT FROM CASE
+				WHEN t.status = 'HELD' THEN '>HELD'
+				WHEN EXISTS (SELECT 1 FROM bookings b WHERE b.reservation_id = t.id) THEN
+					CASE t.status WHEN 'CONFIRMED' THEN '>HELD,HELD>CONFIRMED' ELSE '>HELD,HELD>CONFIRMED,CONFIRMED>CANCELLED' END
+				ELSE '>HELD,HELD>' || t.status END`},
+		{Name: "audit_actor_mismatch", Rule: "Customers hold, confirm, and cancel their own reservations; only the system expires them; the organizer who cancelled a booking is recorded on it.", query: `
 			SELECT a.id::text FROM audit_entries a JOIN reservations r ON r.id = a.reservation_id
+			LEFT JOIN bookings b ON b.reservation_id = r.id
 			WHERE CASE WHEN a.to_status = 'EXPIRED'
 				THEN a.actor_user_id IS NOT NULL OR a.reason <> 'deadline_passed'
+				WHEN a.from_status = 'CONFIRMED'
+				THEN a.actor_user_id IS DISTINCT FROM b.cancelled_by OR a.reason <> 'organizer_request'
 				ELSE a.actor_user_id IS DISTINCT FROM r.user_id OR a.reason <> 'customer_request' END`},
 	}
 	for _, c := range all {
