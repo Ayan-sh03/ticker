@@ -1,5 +1,5 @@
 import { useEffect, useState, type RefObject } from 'react';
-import { date, price, useResource, type Event, type Seat, type Session } from './api';
+import { ApiError, date, price, request, useResource, type Event, type Seat, type Session } from './api';
 import { ErrorMessage } from './Feedback';
 import { maxSeats, seatConflict, useReservation } from './useReservation';
 
@@ -36,6 +36,34 @@ function SeatAvailability({ seats, stale }: { seats: Seat[]; stale: boolean }) {
 
 function SeatSummary({ seats }: { seats: Seat[] }) {
   return <ul className="seat-summary">{seats.map(seat => <li key={seat.id} className="selected-seat">Seat {seat.label}<small>{seat.section} · Row {seat.row_number}</small></li>)}</ul>;
+}
+
+// Signed-in customers can mark interest; organizers see only the count.
+function Interest({ eventID, userID, onSessionExpired }: { eventID: string; userID: string; onSessionExpired: () => void }) {
+  const [interested, setInterested] = useState<boolean>();
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    setInterested(undefined);
+    request<{ interested: boolean }>(`/events/${eventID}/interest`, { signal: controller.signal, headers: { 'X-Ticker-User': userID } })
+      .then(result => setInterested(result.interested))
+      .catch(failure => { if (!controller.signal.aborted && failure instanceof ApiError && failure.status === 401) onSessionExpired(); });
+    return () => controller.abort();
+  }, [eventID, userID]);
+  if (interested === undefined) return null;
+  async function toggle() {
+    setBusy(true); setFailed(false);
+    try {
+      const result = await request<{ interested: boolean }>(`/events/${eventID}/interest`, { method: interested ? 'DELETE' : 'PUT', headers: { 'X-Ticker-User': userID } });
+      setInterested(result.interested);
+    } catch (failure) {
+      if (failure instanceof ApiError && failure.status === 401) onSessionExpired(); else setFailed(true);
+    } finally { setBusy(false); }
+  }
+  return <p className="interest"><button className="button" aria-pressed={interested} disabled={busy} onClick={() => void toggle()}>
+    {interested && <span aria-hidden="true">✓</span>}Interested</button>
+    {failed && <span className="error" role="alert">Your interest could not be saved. Try again.</span>}</p>;
 }
 
 export function EventView({ id, heading, session, checking, selectedIDs, select, onLogin, onSessionExpired }: {
@@ -88,7 +116,8 @@ export function EventView({ id, heading, session, checking, selectedIDs, select,
     {event.error && <ErrorMessage message={event.error} retry={event.retry} />}
     {!event.data && !event.error && <p className="loading" role="status">Loading event…</p>}
     {event.data && <>
-      <div className="page-heading"><p className="eyebrow">{date(event.data.event)}</p><h1 ref={heading} tabIndex={-1}>{event.data.event.title}</h1><p>{event.data.event.venue_name}</p></div>
+      <div className="page-heading"><p className="eyebrow">{date(event.data.event)}</p><h1 ref={heading} tabIndex={-1}>{event.data.event.title}</h1><p>{event.data.event.venue_name}</p>
+        {session && <Interest eventID={event.data.event.id} userID={session.user.id} onSessionExpired={onSessionExpired} />}</div>
       <div className="event-layout">
         <section className="seat-panel" aria-labelledby="seat-heading">
           <div className="section-heading"><div><h2 id="seat-heading">Choose seats</h2><p>{occupied ? 'Your reservation appears in your selection.'
