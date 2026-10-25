@@ -32,6 +32,8 @@ func RegisterRoutes(mux *http.ServeMux, store *Store, sessions *identity.Handler
 	mux.Handle("POST /organizer/tenants/{tenantID}/events/{eventID}/publish", sessions.RequireUser(http.HandlerFunc(h.publishEvent)))
 	mux.Handle("GET /organizer/tenants/{tenantID}/events/{eventID}/seats", sessions.RequireUser(http.HandlerFunc(h.listSeats)))
 	mux.Handle("PATCH /organizer/tenants/{tenantID}/events/{eventID}/seats", sessions.RequireUser(http.HandlerFunc(h.setSeatStatus)))
+	mux.Handle("GET /organizer/tenants/{tenantID}/events/{eventID}/bookings", sessions.RequireUser(http.HandlerFunc(h.listBookings)))
+	mux.Handle("GET /organizer/tenants/{tenantID}/events/{eventID}/holds", sessions.RequireUser(http.HandlerFunc(h.listHolds)))
 }
 
 func (h *Handler) listTenants(w http.ResponseWriter, r *http.Request) {
@@ -340,4 +342,60 @@ func (h *Handler) setSeatStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"seats": seats})
+}
+
+func (h *Handler) listBookings(w http.ResponseWriter, r *http.Request) {
+	tenantID, eventID, limit, offset, ok := listParams(w, r)
+	if !ok {
+		return
+	}
+	session, _ := identity.CurrentSession(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	summary, bookings, err := h.store.ListBookings(ctx, session.User.ID, tenantID, eventID, limit, offset)
+	if err != nil {
+		h.storeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"summary": summary, "bookings": bookings, "limit": limit, "offset": offset})
+}
+
+func (h *Handler) listHolds(w http.ResponseWriter, r *http.Request) {
+	tenantID, eventID, limit, offset, ok := listParams(w, r)
+	if !ok {
+		return
+	}
+	state := r.URL.Query().Get("status")
+	if _, known := holdStates[state]; !known || len(r.URL.Query()["status"]) != 1 {
+		writeError(w, http.StatusBadRequest, "invalid_hold_status", "status must be open, expired, or cancelled")
+		return
+	}
+	session, _ := identity.CurrentSession(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	holds, err := h.store.ListHolds(ctx, session.User.ID, tenantID, eventID, state, limit, offset)
+	if err != nil {
+		h.storeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"holds": holds, "limit": limit, "offset": offset})
+}
+
+func listParams(w http.ResponseWriter, r *http.Request) (tenantID, eventID string, limit, offset int, ok bool) {
+	if tenantID, ok = pathID(w, r, "tenantID"); !ok {
+		return
+	}
+	if eventID, ok = pathID(w, r, "eventID"); !ok {
+		return
+	}
+	var err error
+	if limit, err = pageNumber(r, "limit", 20, 1, 100); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_pagination", "limit must be an integer from 1 to 100")
+		return "", "", 0, 0, false
+	}
+	if offset, err = pageNumber(r, "offset", 0, 0, 10000); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_pagination", "offset must be an integer from 0 to 10000")
+		return "", "", 0, 0, false
+	}
+	return tenantID, eventID, limit, offset, true
 }
