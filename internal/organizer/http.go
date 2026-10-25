@@ -30,6 +30,8 @@ func RegisterRoutes(mux *http.ServeMux, store *Store, sessions *identity.Handler
 	mux.Handle("PUT /organizer/tenants/{tenantID}/events/{eventID}", sessions.RequireUser(http.HandlerFunc(h.updateEvent)))
 	mux.Handle("DELETE /organizer/tenants/{tenantID}/events/{eventID}", sessions.RequireUser(http.HandlerFunc(h.deleteEvent)))
 	mux.Handle("POST /organizer/tenants/{tenantID}/events/{eventID}/publish", sessions.RequireUser(http.HandlerFunc(h.publishEvent)))
+	mux.Handle("GET /organizer/tenants/{tenantID}/events/{eventID}/seats", sessions.RequireUser(http.HandlerFunc(h.listSeats)))
+	mux.Handle("PATCH /organizer/tenants/{tenantID}/events/{eventID}/seats", sessions.RequireUser(http.HandlerFunc(h.setSeatStatus)))
 }
 
 func (h *Handler) listTenants(w http.ResponseWriter, r *http.Request) {
@@ -213,6 +215,7 @@ func (h *Handler) readOrPublish(w http.ResponseWriter, r *http.Request, publish 
 }
 
 func (h *Handler) storeError(w http.ResponseWriter, r *http.Request, err error) {
+	var conflict *SeatConflictError
 	switch {
 	case errors.Is(err, ErrForbidden):
 		writeError(w, http.StatusForbidden, "organizer_required", "organizer membership for this tenant is required")
@@ -228,6 +231,13 @@ func (h *Handler) storeError(w http.ResponseWriter, r *http.Request, err error) 
 		writeError(w, http.StatusConflict, "published_layout_frozen", "price, currency, and layout are locked after the first reservation")
 	case errors.Is(err, ErrLayoutConflict):
 		writeError(w, http.StatusConflict, "event_layout_conflict", "layout change conflicts with existing seats")
+	case errors.As(err, &conflict):
+		writeJSON(w, http.StatusConflict, map[string]any{"error": map[string]any{"code": "seat_unavailable",
+			"message": "sold or held seats cannot be blocked or unblocked", "seat_ids": conflict.SeatIDs}})
+	case errors.Is(err, ErrNotPublished):
+		writeError(w, http.StatusConflict, "event_not_published", "publish the event before changing seat availability")
+	case errors.Is(err, ErrSeatNotFound):
+		writeError(w, http.StatusNotFound, "seat_not_found", "every seat must belong to this event")
 	case errors.Is(err, ErrHasReservations):
 		writeError(w, http.StatusConflict, "event_has_reservations", "events with reservation history cannot be deleted")
 	default:
@@ -270,4 +280,64 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func (h *Handler) listSeats(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := pathID(w, r, "tenantID")
+	if !ok {
+		return
+	}
+	eventID, ok := pathID(w, r, "eventID")
+	if !ok {
+		return
+	}
+	session, _ := identity.CurrentSession(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	seats, err := h.store.ListSeats(ctx, session.User.ID, tenantID, eventID)
+	if err != nil {
+		h.storeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"seats": seats})
+}
+
+// setSeatStatus blocks or unblocks up to 200 seats at once, all or none.
+func (h *Handler) setSeatStatus(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := pathID(w, r, "tenantID")
+	if !ok {
+		return
+	}
+	eventID, ok := pathID(w, r, "eventID")
+	if !ok {
+		return
+	}
+	var payload SeatInput
+	if !decodeMutation(w, r, &payload) {
+		return
+	}
+	valid := (payload.Status == "BLOCKED" || payload.Status == "AVAILABLE") && len(payload.SeatIDs) >= 1 && len(payload.SeatIDs) <= 200
+	seen := make(map[string]bool, len(payload.SeatIDs))
+	for i, value := range payload.SeatIDs {
+		var id pgtype.UUID
+		if !valid || len(value) != 36 || id.Scan(value) != nil || seen[id.String()] {
+			valid = false
+			break
+		}
+		payload.SeatIDs[i] = id.String()
+		seen[payload.SeatIDs[i]] = true
+	}
+	if !valid {
+		writeError(w, http.StatusBadRequest, "invalid_seat_payload", "provide status BLOCKED or AVAILABLE and 1–200 distinct seat_ids")
+		return
+	}
+	session, _ := identity.CurrentSession(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	seats, err := h.store.SetSeatStatus(ctx, session.User.ID, tenantID, eventID, payload)
+	if err != nil {
+		h.storeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"seats": seats})
 }
