@@ -183,7 +183,6 @@ export function useReservation(eventID: string, userID: string | undefined, onSe
     const poll = window.setInterval(() => {
       if (!document.hidden && !saved.current.pending && saved.current.reservationID) void run(undefined, true);
     }, 2000);
-    const tick = window.setInterval(() => setNow(performance.now()), 1000);
     document.addEventListener('visibilitychange', resume);
     window.addEventListener('online', resume);
     window.addEventListener('focus', resume);
@@ -194,13 +193,18 @@ export function useReservation(eventID: string, userID: string | undefined, onSe
       working.current = false;
       mutating.current = false;
       window.clearInterval(poll);
-      window.clearInterval(tick);
       document.removeEventListener('visibilitychange', resume);
       window.removeEventListener('online', resume);
       window.removeEventListener('focus', resume);
     };
     // EventView is keyed by account and event; this effect owns that lifetime.
   }, [storageKey, userID]);
+
+  useEffect(() => {
+    if (reservation?.status !== 'HELD' || !clock) return;
+    const tick = window.setInterval(() => setNow(performance.now()), 1000);
+    return () => window.clearInterval(tick);
+  }, [reservation?.status, clock]);
 
   useEffect(() => {
     if (reservation?.status === 'HELD' && clock && seconds === 0 && !pending) void run();

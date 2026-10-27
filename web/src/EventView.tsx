@@ -1,7 +1,11 @@
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { ApiError, date, price, request, useResource, type Event, type Seat, type Session } from './api';
 import { ErrorMessage } from './Feedback';
 import { maxSeats, seatConflict, useReservation } from './useReservation';
+import { groupSeats } from './seatGroups';
+
+const emptySeats: Seat[] = [];
+const emptyIDs: string[] = [];
 
 const statuses = { AVAILABLE: 'Available', HELD: 'Held', SOLD: 'Booked', BLOCKED: 'Blocked' };
 // Percentage of bookable seats remaining; blocked seats do not add capacity.
@@ -9,7 +13,7 @@ const availabilityThresholds = { fewPercent: 10, limitedPercent: 25 };
 
 const seatCount = (n: number) => `${n} ${n === 1 ? 'seat' : 'seats'}`;
 
-function SeatAvailability({ seats, stale }: { seats: Seat[]; stale: boolean }) {
+const SeatAvailability = memo(function SeatAvailability({ seats, stale }: { seats: Seat[]; stale: boolean }) {
   const counts = { AVAILABLE: 0, HELD: 0, SOLD: 0, BLOCKED: 0 };
   for (const seat of seats) counts[seat.status]++;
   if (!seats.length) return <p className="availability-empty" role="status">{stale ? 'No seats were listed at the last refresh.' : 'No seats are listed for this event.'}</p>;
@@ -32,7 +36,7 @@ function SeatAvailability({ seats, stale }: { seats: Seat[]; stale: boolean }) {
     <div className="availability-heading"><p className="remaining-count"><strong>{counts.AVAILABLE}</strong> {counts.AVAILABLE === 1 ? 'seat' : 'seats'} remaining</p><span className="availability-label" data-level={level}>{label}</span></div>
     {detail && <p className="availability-detail">{detail}</p>}
   </div>;
-}
+});
 
 function SeatSummary({ seats }: { seats: Seat[] }) {
   return <ul className="seat-summary">{seats.map(seat => <li key={seat.id} className="selected-seat">Seat {seat.label}<small>{seat.section} · Row {seat.row_number}</small></li>)}</ul>;
@@ -80,6 +84,27 @@ function Interest({ eventID, userID, onSessionExpired }: { eventID: string; user
     {failure === 'save' && <span className="error" role="alert">Your interest could not be saved. Try again.</span>}</p>;
 }
 
+// Countdown ticks leave this subtree untouched. Inventory, selection, ownership,
+// stale reads and the six-seat cap still update every button when they change.
+const SeatMap = memo(function SeatMap({ groups, list, ownedIDs, selected, occupied, full, showOwnership, booked, stale, onToggle }: {
+  groups: Map<string, Seat[]>; list: boolean; ownedIDs: string[]; selected: Seat[];
+  occupied: boolean; full: boolean; showOwnership: boolean; booked: boolean; stale: boolean; onToggle: (id: string) => void;
+}) {
+  return <>
+    {[...groups].map(([group, rowSeats]) => <div className="seat-group" key={group}>
+      <h3>{group}</h3><ul className={list ? 'seat-list' : 'seat-grid'}>{rowSeats.map(seat => {
+        const unavailable = seat.status !== 'AVAILABLE';
+        const yours = ownedIDs.includes(seat.id) && showOwnership;
+        const chosen = !occupied && selected.some(value => value.id === seat.id);
+        const capped = !unavailable && !chosen && !occupied && full;
+        return <li key={seat.id}><button className={`seat ${list ? 'seat-line' : ''} ${yours ? 'seat-owned' : ''} ${capped ? 'seat-capped' : ''}`} data-seat-status={seat.status} disabled={unavailable || stale || occupied || capped} aria-pressed={chosen || yours} aria-label={`${seat.label}, ${yours ? booked ? 'your confirmed seat' : 'your reservation' : statuses[seat.status]}${chosen ? ', selected' : ''}${capped ? `, ${maxSeats}-seat limit reached` : ''}`} onClick={() => onToggle(seat.id)}>
+          <span>{seat.label}</span><span className="seat-state" aria-hidden="true">{yours ? list ? 'Yours' : '✓' : list || unavailable ? statuses[seat.status] : chosen ? '✓' : ''}</span>
+        </button></li>;
+      })}</ul>
+    </div>)}
+  </>;
+});
+
 export function EventView({ id, heading, session, checking, selectedIDs, select, onLogin, onSessionExpired }: {
   id: string; heading: RefObject<HTMLHeadingElement | null>; session: Session | null;
   checking: boolean; onLogin: () => void; onSessionExpired: () => void;
@@ -95,12 +120,12 @@ export function EventView({ id, heading, session, checking, selectedIDs, select,
   // before confirmation becomes available.
   const heldQuote = hold.reservation?.price_minor !== undefined && hold.reservation.currency
     ? { price_minor: hold.reservation.price_minor, currency: hold.reservation.currency } : undefined;
-  const ownedIDs = hold.booking?.seat_ids ?? hold.reservation?.seat_ids ?? (hold.pending?.kind === 'reserve' ? hold.pending.seatIDs : []);
-  const seats = inventory.data?.seats ?? [];
+  const ownedIDs = hold.booking?.seat_ids ?? hold.reservation?.seat_ids ?? (hold.pending?.kind === 'reserve' ? hold.pending.seatIDs : emptyIDs);
+  const seats = inventory.data?.seats ?? emptySeats;
   const ownedSeats = seats.filter(seat => ownedIDs.includes(seat.id));
   const occupied = !!hold.pending || hold.hasRecord;
   const cancelled = hold.booking?.status === 'CANCELLED';
-  const selected = seats.filter(seat => selectedIDs.includes(seat.id) && seat.status === 'AVAILABLE');
+  const selected = useMemo(() => seats.filter(seat => selectedIDs.includes(seat.id) && seat.status === 'AVAILABLE'), [seats, selectedIDs]);
   const full = selected.length >= maxSeats;
   useEffect(() => { if (event.data) heading.current?.focus(); }, [event.data, heading]);
   // Drop selected seats that are no longer available, and say which ones.
@@ -112,16 +137,12 @@ export function EventView({ id, heading, session, checking, selectedIDs, select,
     setLost(seats.filter(seat => gone.includes(seat.id)).map(seat => seat.label));
   }, [selectedIDs, inventory.data, occupied]);
   useEffect(() => { inventory.retry(); }, [hold.reservation?.status, hold.pending]);
-  const groups = new Map<string, Seat[]>();
-  for (const seat of seats) {
-    const group = `${seat.section} / Row ${seat.row_number}`;
-    groups.set(group, [...(groups.get(group) ?? []), seat]);
-  }
-  function toggle(seatID: string) {
+  const groups = useMemo(() => groupSeats(seats), [seats]);
+  const toggle = useCallback((seatID: string) => {
     setLost([]);
     if (selectedIDs.includes(seatID)) select(selectedIDs.filter(value => value !== seatID));
     else if (!full) select([...selected.map(seat => seat.id), seatID]);
-  }
+  }, [selectedIDs, full, selected, select]);
   const total = (quote: { price_minor: number; currency: string }, n: number) => price({ price_minor: quote.price_minor * n, currency: quote.currency });
   const owned = ownedSeats.length || ownedIDs.length;
 
@@ -143,17 +164,9 @@ export function EventView({ id, heading, session, checking, selectedIDs, select,
           {!inventory.data && !inventory.error && <p className="loading" role="status">Loading seats…</p>}
           {inventory.data && <>
             {!list && seats.length > 0 && <div className="stage">Stage</div>}
-            {[...groups].map(([group, rowSeats]) => <div className="seat-group" key={group}>
-              <h3>{group}</h3><ul className={list ? 'seat-list' : 'seat-grid'}>{rowSeats.map(seat => {
-                const unavailable = seat.status !== 'AVAILABLE';
-                const yours = ownedIDs.includes(seat.id) && (hold.reservation?.status === 'HELD' || (!!hold.booking && !cancelled) || !!hold.pending);
-                const chosen = !occupied && selected.some(value => value.id === seat.id);
-                const capped = !unavailable && !chosen && !occupied && full;
-                return <li key={seat.id}><button className={`seat ${list ? 'seat-line' : ''} ${yours ? 'seat-owned' : ''} ${capped ? 'seat-capped' : ''}`} data-seat-status={seat.status} disabled={unavailable || !!inventory.error || occupied || capped} aria-pressed={chosen || yours} aria-label={`${seat.label}, ${yours ? hold.booking ? 'your confirmed seat' : 'your reservation' : statuses[seat.status]}${chosen ? ', selected' : ''}${capped ? `, ${maxSeats}-seat limit reached` : ''}`} onClick={() => toggle(seat.id)}>
-                  <span>{seat.label}</span><span className="seat-state" aria-hidden="true">{yours ? list ? 'Yours' : '✓' : list || unavailable ? statuses[seat.status] : chosen ? '✓' : ''}</span>
-                </button></li>;
-              })}</ul>
-            </div>)}
+            <SeatMap groups={groups} list={list} ownedIDs={ownedIDs} selected={selected} occupied={occupied} full={full}
+              showOwnership={hold.reservation?.status === 'HELD' || (!!hold.booking && !cancelled) || !!hold.pending}
+              booked={!!hold.booking} stale={!!inventory.error} onToggle={toggle} />
           </>}
         </section>
         <aside className="selection" aria-labelledby="selection-heading"><h2 id="selection-heading">Your selection</h2>
