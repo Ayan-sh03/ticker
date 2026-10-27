@@ -126,6 +126,30 @@ Results after the cache fix (same tests):
 
 These are breakpoint tests: k6 raises the arrival rate past what the stack can serve, so many scheduled journeys are dropped by design. The fix moved the limit, it did not remove it. The 10,000-seat run after the fix did not finish: k6 hit its 2 GiB memory limit and was killed (exit 137), and before that 35 requests timed out or lost their connection. All numbers come from one shared machine, so they compare runs with each other, not with production hardware. The raw results stay local, under the run IDs `ticker-deep-ramp`, `-ramp2`, `-afterlarge`, and `-aftersmall` of 4 October 2026.
 
+### Latency optimizations, 27 October 2026
+
+The follow-up removes repeated work while keeping the locking order, post-lock time checks, durable commits, saved request responses, owner checks, exact revenue definition, and two-second availability/polling intervals. Normal hold polling reads its protected reservation directly; a known booking polls its owner-only receipt, including cancellation status. Initial setup, recovery, mutations, and older saved records keep their identity/recovery path. Countdown updates reuse the unchanged seat-map subtree; local row arrays append instead of copying. Confirmation sends four ordered writes as one `pgx.Batch` inside its existing transaction, checks every result, and closes the batch before reading the receipt or committing. Event insights combine active-booking totals and chart aggregates with `GROUPING SETS` inside the existing snapshot. Docker precompresses JavaScript/CSS, makes only content-hashed assets immutable, and revalidates HTML.
+
+Measurements compare `3ea31b6` with this change on one shared four-core environment. One API receives traffic at a time, with a two-core/1 GiB allowance, pool 12, and the same isolated PostgreSQL fixture. Full measurement summaries and limitations are in [bench/performance-results.json](../bench/performance-results.json).
+
+| Optimization | Metric | Before | After |
+|---|---|---|---|
+| Hold polling | authenticated requests per two-second poll | 2 | 1 |
+| Known-booking polling | authenticated requests per two-second poll | 3 | 1 |
+| Seat rendering | median stable-snapshot countdown render, 10,000 seats | 284.40 ms | 2.60 ms |
+| Event insights, 8,000 active bookings | median of three run medians | 78.47 ms | 67.17 ms |
+| Confirmation, local database | pooled HTTP p95 | 7.49 ms | 7.53 ms |
+| Confirmation, controlled database-delay proxy | pooled HTTP p95 | 181.24 ms | 150.30 ms |
+| Docker JavaScript delivery | fresh transfer with gzip accepted | 307,796 bytes | 89,630 bytes |
+
+Rendering used the Chromium React **development Profiler**, three paired runs, and an unchanged snapshot: it measures countdown render work, excluding initial mounting and network-driven map refreshes. It is not production browser latency or a claim that every UI render improves by the same amount. Polling request counts were observed in the browser. Insights used three alternating runs of 25 measured HTTP responses per version after five warmups per run. The rendered maps and mocked polling responses are separate from the live API latency measurements.
+
+Confirmation used three alternating 30-second runs per version at 20 booking journeys/s, with 1,800 measured confirmations per version. The local p95 difference is effectively neutral. A separate three-pair comparison used a TCP proxy adding 5 ms per forwarded chunk in each direction, 15-second runs, and 900 measured confirmations per version. The proxy result isolates network round-trip overhead; it is not a Neon or production measurement. No unexpected HTTP errors occurred during either healthy booking comparison. These are scoped before/after experiments, not new maximum-capacity or long-soak claims.
+
+Manual validation compared complete insights JSON for empty events, cancelled and multi-seat bookings, spring/fall DST, the opening-window boundary, moved sales opening, sold-out events, blocked capacity, and exact money totals exceeding `int64`. Browser checks covered the six-seat cap, map/list behavior, conflict selection retention, stale inventory, cancellation refresh, expected-account rejection, and older saved booking records. A six-seat race had one winner out of 200 attempts; 50 concurrent confirmations with one key returned the same booking. An injected failure on the batch's audit insert rolled back its preceding booking/seat/status writes and request-key row; retrying the same key afterward succeeded. The comparison database passed all 16 invariant checks. Seat-panel DOM matched before/after in map and list views for selected, held, and booked states. The optimized build also passed the same seven single-API chaos scenarios (2,435 bookings): API crashes, database pause/crash, discarded committed responses, lock timeout, Redis outage, and real five-minute hold expiry with a stopped worker. Its final audit passed all 16 checks with nothing skipped. These checks are manual harnesses, not a new automated test suite in CI.
+
+Fixture setup on the populated benchmark database also exposed an existing large-event publication deadline: both paths still use the unchanged three-second publication budget. Large synthetic layouts for these measurements were populated separately using the same guarded SQL, without disabling constraints or triggers; publication time is excluded from the reported latency measurements.
+
 ## 9. Trade-offs and limits
 
 - **PostgreSQL decides everything.** No distributed locks, queues, or caches take part in ownership. This is simpler and safe, but one primary database is the ceiling for writes to a single event.

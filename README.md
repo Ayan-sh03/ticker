@@ -40,7 +40,8 @@ The main goal is simple: **a seat is never sold twice**, even when many people c
 - **Go** (`net/http` and `pgx`) runs the API and the worker. They are two processes from one Go module.
 - **PostgreSQL** keeps all of the state. Row locks, taken in one fixed order, decide who gets a seat. Constraints and partial unique indexes are a second line of defense.
 - **Redis** keeps only rate-limit counters and short-lived signup codes. If Redis stops, rate limits use memory, and signup returns 503 until Redis is back. Seats and bookings do not use Redis.
-- **React + TypeScript + Vite** make the UI.
+- **React + TypeScript + Vite** make the UI. The seat map reuses unchanged rendering work during countdown updates. Reservation and receipt polling keep the same two-second interval and verify the expected account on each protected read.
+- **Docker frontend delivery** serves precompressed JavaScript/CSS and caches content-hashed assets. HTML revalidates so a new deployment is discovered.
 - An append-only **audit trail** records each hold, confirmation, expiry, and cancellation. A read-only **audit command** checks the database for broken rules.
 
 For the full design, read [docs/report.md](docs/report.md).

@@ -1,0 +1,317 @@
+{
+  "baseline_revision": "3ea31b6b52b7fb9c42c28ccf99c98abf79ccb7e5",
+  "candidate_branch": "perf/remove-redundant-work",
+  "date_utc": "2026-10-27",
+  "environment": {
+    "shared_cpu_cores": 4,
+    "api_cpu_allowance": 2,
+    "api_memory_mib": 1024,
+    "database_pool_per_api": 12,
+    "measurement": "One version receives traffic at a time; baseline and candidate share the same isolated PostgreSQL fixture."
+  },
+  "polling": [
+    {
+      "label": "before",
+      "kind": "polling",
+      "state": "HELD",
+      "cycles": 2,
+      "private_requests": 4,
+      "requests_per_cycle": 2,
+      "counts": {
+        "/api/me": 2,
+        "/api/reservations/00000000-0000-4000-8000-000000000003": 2
+      }
+    },
+    {
+      "label": "before",
+      "kind": "polling",
+      "state": "CONFIRMED",
+      "cycles": 2,
+      "private_requests": 6,
+      "requests_per_cycle": 3,
+      "counts": {
+        "/api/me": 2,
+        "/api/reservations/00000000-0000-4000-8000-000000000003": 2,
+        "/api/bookings/00000000-0000-4000-8000-000000000004": 2
+      }
+    },
+    {
+      "label": "after",
+      "kind": "polling",
+      "state": "HELD",
+      "cycles": 2,
+      "private_requests": 2,
+      "requests_per_cycle": 1,
+      "counts": {
+        "/api/reservations/00000000-0000-4000-8000-000000000003": 2
+      }
+    },
+    {
+      "label": "after",
+      "kind": "polling",
+      "state": "CONFIRMED",
+      "cycles": 2,
+      "private_requests": 2,
+      "requests_per_cycle": 1,
+      "counts": {
+        "/api/bookings/00000000-0000-4000-8000-000000000004": 2
+      }
+    }
+  ],
+  "render": {
+    "before": {
+      "samples": 13,
+      "p50_ms": 284.4,
+      "p95_ms": 367.0,
+      "p99_ms": 367.0
+    },
+    "after": {
+      "samples": 13,
+      "p50_ms": 2.6,
+      "p95_ms": 4,
+      "p99_ms": 4
+    },
+    "method": "Chromium React development Profiler; 10,000 seats; three paired runs; stable-snapshot countdown updates only, excluding mounting and network refresh. Not production wall-clock user latency."
+  },
+  "insights": {
+    "before": {
+      "runs": 3,
+      "measured_requests": 75,
+      "median_run_p50_ms": 78.468,
+      "median_run_p95_ms": 90.493,
+      "run_summaries": [
+        {
+          "label": "before",
+          "round": 0,
+          "active_bookings": 8000,
+          "count": 25,
+          "p50_ms": 78.468,
+          "p95_ms": 87,
+          "p99_ms": 98.233
+        },
+        {
+          "label": "before",
+          "round": 1,
+          "active_bookings": 8000,
+          "count": 25,
+          "p50_ms": 81.201,
+          "p95_ms": 108.002,
+          "p99_ms": 124.04
+        },
+        {
+          "label": "before",
+          "round": 2,
+          "active_bookings": 8000,
+          "count": 25,
+          "p50_ms": 75.176,
+          "p95_ms": 90.493,
+          "p99_ms": 96.459
+        }
+      ]
+    },
+    "after": {
+      "runs": 3,
+      "measured_requests": 75,
+      "median_run_p50_ms": 67.17,
+      "median_run_p95_ms": 73.516,
+      "run_summaries": [
+        {
+          "label": "after",
+          "round": 0,
+          "active_bookings": 8000,
+          "count": 25,
+          "p50_ms": 67.17,
+          "p95_ms": 73.516,
+          "p99_ms": 78.332
+        },
+        {
+          "label": "after",
+          "round": 1,
+          "active_bookings": 8000,
+          "count": 25,
+          "p50_ms": 68.513,
+          "p95_ms": 84.505,
+          "p99_ms": 89.645
+        },
+        {
+          "label": "after",
+          "round": 2,
+          "active_bookings": 8000,
+          "count": 25,
+          "p50_ms": 64.996,
+          "p95_ms": 70.202,
+          "p99_ms": 94.953
+        }
+      ]
+    },
+    "method": "HTTP event-insights response on the same 8,000-active-booking event; three runs of 25 samples per version after five discarded warmups per run; alternating order. Values are medians of the per-run percentiles, not pooled percentiles."
+  },
+  "confirmation": {
+    "direct": {
+      "before": {
+        "samples": 1800,
+        "p50_ms": 3.858,
+        "p95_ms": 7.485,
+        "p99_ms": 13.781
+      },
+      "after": {
+        "samples": 1800,
+        "p50_ms": 3.792,
+        "p95_ms": 7.526,
+        "p99_ms": 12.738
+      },
+      "method": {
+        "offered_bookings_per_second": 20,
+        "runs_per_version": 3,
+        "seconds_per_run": 30,
+        "zero_unexpected_http_errors": true
+      }
+    },
+    "proxy": {
+      "before": {
+        "samples": 900,
+        "p50_ms": 174.204,
+        "p95_ms": 181.242,
+        "p99_ms": 185.286
+      },
+      "after": {
+        "samples": 900,
+        "p50_ms": 142.613,
+        "p95_ms": 150.301,
+        "p99_ms": 158.955
+      },
+      "method": {
+        "offered_bookings_per_second": 20,
+        "runs_per_version": 3,
+        "seconds_per_run": 15,
+        "zero_unexpected_http_errors": true,
+        "delay": "Controlled PostgreSQL TCP proxy with a 5ms delay per forwarded chunk in each direction; simulated network overhead, not a Neon or production result."
+      }
+    }
+  },
+  "assets": [
+    {
+      "label": "before",
+      "path": "/assets/index-CHhG6exF.js",
+      "identity_bytes": 307796,
+      "gzip_requested_bytes": 307796,
+      "encoding": "identity",
+      "asset_cache": null,
+      "html_cache": null
+    },
+    {
+      "label": "after",
+      "path": "/assets/index-Dmjc3bId.js",
+      "identity_bytes": 308729,
+      "gzip_requested_bytes": 89630,
+      "encoding": "gzip",
+      "asset_cache": "public, max-age=31536000, immutable",
+      "html_cache": "no-cache"
+    }
+  ],
+  "validation": {
+    "browser": [
+      "six-seat limit and deselection",
+      "map/list markup",
+      "taken-seat partial selection retained",
+      "stale inventory disables selection",
+      "cancellation refresh",
+      "account-switch rejection",
+      "older saved booking fallback"
+    ],
+    "insights_parity": [
+      {
+        "name": "empty",
+        "output_equal": true
+      },
+      {
+        "name": "spring_dst_multiseat_cancelled",
+        "output_equal": true
+      },
+      {
+        "name": "fall_dst_multiseat_cancelled",
+        "output_equal": true
+      },
+      {
+        "name": "exact_large_money",
+        "output_equal": true
+      },
+      {
+        "name": "sold_out",
+        "output_equal": true
+      },
+      {
+        "name": "blocked_sellout_unknown",
+        "output_equal": true
+      },
+      {
+        "name": "opening_moved_after_sales",
+        "output_equal": true
+      },
+      {
+        "name": "all_cancelled",
+        "output_equal": true
+      }
+    ],
+    "core": {
+      "six_seat_race": {
+        "attempts": 200,
+        "winners": 1,
+        "conflicts": 199
+      },
+      "reserve_sorted_payload_replay_identical": true,
+      "concurrent_confirm_replay": {
+        "requests": 50,
+        "identical": true,
+        "bookings": 1
+      },
+      "receipt_owner_isolation": true,
+      "wrong_actor_rejected_before_idempotency_write": true,
+      "batch_audit_failure": {
+        "status": 503,
+        "all_prior_writes_rolled_back": true,
+        "same_key_retry_status": 201,
+        "seats": 6
+      }
+    },
+    "seat_panel_dom_parity": [
+      {
+        "state": "NONE",
+        "seat_panel_map_and_list_dom_identical": true
+      },
+      {
+        "state": "HELD",
+        "seat_panel_map_and_list_dom_identical": true
+      },
+      {
+        "state": "CONFIRMED",
+        "seat_panel_map_and_list_dom_identical": true
+      }
+    ],
+    "checks": [
+      "Go formatting, vet and build",
+      "TypeScript and Vite production build",
+      "Compose validation and image builds",
+      "all 16 comparison database invariant checks"
+    ],
+    "chaos": {
+      "scenarios": 7,
+      "completed_bookings": 2435,
+      "final_audit": "16 checks, 0 failed, 0 skipped",
+      "single_api_replica": true
+    }
+  },
+  "assets_method": "Fresh HTTP requests through Docker nginx with Accept-Encoding:gzip; optimized gzip decodes to its identity response. Also checked q=0, Vary, ETag/304, HTML revalidation and missing-asset 404.",
+  "candidate_code_revision": "178f054e15abc085381118865278f11235ea7a93",
+  "candidate_source_sha256": {
+    "web/Dockerfile": "0f259a49fc33c034640c5da17b181be60ae389d76f0a3aa2ac7499563c158909",
+    "web/nginx.conf": "5223b7a54f0ed22bd71d4c0919e315d591ffe9ef64977a94b84cdd52ee896068",
+    "web/src/seatGroups.ts": "75aaa3639c678d3d6c2c5342a15dc1aa4c3f71ae9bae82259eec89b59b8cfc6b",
+    "web/src/EventView.tsx": "0437b8096187a49d4cdb537459f5f82999592a84f1dcebd6f70835c76aaece0f",
+    "web/src/OrganizerSeats.tsx": "51181e6791445810f499374e5876bc0b348664709b3bfd4b45ec23b97d76e7e2",
+    "web/src/useReservation.ts": "63ffbda651740b095fdb5e5dd026368194ece2a6b05455be746d3d66f83f9f51",
+    "internal/reservation/reservation.go": "25835b1cce43c57fdd91cf0138da9be4a8b04c192fe8d0f4f5d2a3030c37aa2e",
+    "internal/reservation/confirm.go": "3d8a7896af0f3c3f680dde662dc7f8be1ce7149d81ea99e0ab1b08e124ed8500",
+    "internal/organizer/insights.go": "d409b168b1b7303fe7f8241ef889c830402e0bb82dcca9c952908b1005a72e8e"
+  }
+}
