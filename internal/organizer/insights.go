@@ -155,21 +155,23 @@ func (s *Store) EventInsights(ctx context.Context, userID, tenantID, eventID str
 	}
 	defer tx.Rollback(context.Background())
 	var out EventInsights
-	rows, err := tx.Query(ctx, eventSales+`AND e.id = $2`, tenantID, eventID)
-	if err != nil {
-		return EventInsights{}, err
-	}
-	out.Event, err = pgx.CollectExactlyOneRow(rows, scanEventSales)
+	// Read event metadata without a separate revenue scan. The grouped query
+	// below computes all active-booking totals and chart series together.
+	err = tx.QueryRow(ctx, `SELECT e.id::text, e.title, e.starts_at, e.currency,
+		(SELECT count(*) FROM seats s WHERE s.tenant_id = e.tenant_id AND s.event_id = e.id AND s.status <> 'BLOCKED'),
+		(SELECT count(*) FROM event_interests i WHERE i.event_id = e.id)
+		FROM events e WHERE e.tenant_id = $1 AND e.id = $2 AND e.status = 'PUBLISHED'`, tenantID, eventID).Scan(
+		&out.Event.ID, &out.Event.Title, &out.Event.StartsAt, &out.Event.Currency, &out.Event.Capacity, &out.Event.Interested)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return EventInsights{}, ErrNotFound
 	}
 	if err != nil {
 		return EventInsights{}, err
 	}
+	out.Funnel.Interested = out.Event.Interested
 	var blocked bool
 	// One database time, so a hold cannot count as both open and expired.
 	if err := tx.QueryRow(ctx, `SELECT t.time_zone, e.sales_open_at,
-		(SELECT count(*) FROM event_interests WHERE event_id = e.id),
 		(SELECT count(*) FROM reservations WHERE tenant_id = e.tenant_id AND event_id = e.id),
 		(SELECT count(*) FROM bookings WHERE tenant_id = e.tenant_id AND event_id = e.id),
 		(SELECT count(*) FROM reservations WHERE tenant_id = e.tenant_id AND event_id = e.id
@@ -181,28 +183,67 @@ func (s *Store) EventInsights(ctx context.Context, userID, tenantID, eventID str
 			WHERE tenant_id = e.tenant_id AND event_id = e.id AND created_at >= e.sales_open_at),
 		EXISTS (SELECT 1 FROM seats WHERE tenant_id = e.tenant_id AND event_id = e.id AND status = 'BLOCKED')
 		FROM events e JOIN tenants t ON t.id = e.tenant_id WHERE e.tenant_id = $1 AND e.id = $2`, tenantID, eventID).Scan(
-		&out.TimeZone, &out.SalesOpenAt, &out.Funnel.Interested, &out.Funnel.Holds, &out.Funnel.Confirmed, &out.Funnel.Expired,
+		&out.TimeZone, &out.SalesOpenAt, &out.Funnel.Holds, &out.Funnel.Confirmed, &out.Funnel.Expired,
 		&out.Funnel.CancelledHolds, &out.Funnel.CancelledBookings, &out.FirstBookingSeconds, &blocked); err != nil {
 		return EventInsights{}, err
 	}
-	if !blocked && out.Event.Capacity > 0 && out.Event.SeatsSold == out.Event.Capacity {
-		if err := tx.QueryRow(ctx, `SELECT extract(epoch FROM max(created_at) - $3::timestamptz)::float8 FROM booking_revenue
-			WHERE tenant_id = $1 AND event_id = $2 AND created_at >= $3`, tenantID, eventID, out.SalesOpenAt).Scan(&out.SoldOutSeconds); err != nil {
-			return EventInsights{}, err
-		}
-	}
-	rows, err = tx.Query(ctx, `SELECT to_char(created_at AT TIME ZONE $3, 'YYYY-MM-DD') AS day, sum(seats), sum(net_minor)::text
-		FROM booking_revenue WHERE tenant_id = $1 AND event_id = $2 GROUP BY day ORDER BY day`, tenantID, eventID, out.TimeZone)
+	// GROUPING SETS shares the booking_revenue scan while preserving its
+	// per-booking fee rounding, exact sums and the tenant's local day/hour.
+	// The opening series has an absolute 24-hour window, including across DST.
+	rows, err := tx.Query(ctx, `WITH sales AS (
+		SELECT seats, gross_minor, fee_minor, net_minor,
+			to_char(created_at AT TIME ZONE $3, 'YYYY-MM-DD') AS day,
+			extract(hour FROM created_at AT TIME ZONE $3)::int AS hour,
+			CASE WHEN created_at >= $4::timestamptz AND created_at < $4::timestamptz + interval '24 hours'
+				THEN floor(extract(epoch FROM created_at - $4::timestamptz) / 3600)::int END AS opening_hour,
+			CASE WHEN created_at >= $4::timestamptz
+				THEN extract(epoch FROM created_at - $4::timestamptz)::float8 END AS since_open
+		FROM booking_revenue WHERE tenant_id = $1 AND event_id = $2
+	)
+	SELECT grouping(day, hour, opening_hour), day, hour, opening_hour,
+		count(*), coalesce(sum(seats), 0), coalesce(sum(gross_minor), 0)::text,
+		coalesce(sum(fee_minor), 0)::text, coalesce(sum(net_minor), 0)::text, max(since_open)
+	FROM sales GROUP BY GROUPING SETS ((), (day), (hour), (opening_hour))
+	ORDER BY day, hour, opening_hour`, tenantID, eventID, out.TimeZone, out.SalesOpenAt)
 	if err != nil {
 		return EventInsights{}, err
 	}
-	if out.Daily, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (DayRevenue, error) {
-		var d DayRevenue
-		err := row.Scan(&d.Day, &d.SeatsSold, &d.NetMinor)
-		return d, err
-	}); err != nil {
+	defer rows.Close()
+	out.Daily = []DayRevenue{}
+	out.Hours = []Count{}
+	out.Opening = []Count{}
+	for rows.Next() {
+		var grouping int
+		var day *string
+		var hour, openingHour *int
+		var revenue Revenue
+		var sinceOpen *float64
+		if err := rows.Scan(&grouping, &day, &hour, &openingHour,
+			&revenue.Bookings, &revenue.SeatsSold, &revenue.GrossMinor, &revenue.FeeMinor, &revenue.NetMinor, &sinceOpen); err != nil {
+			return EventInsights{}, err
+		}
+		// GROUPING marks omitted keys with a bit: day=4, hour=2, opening=1.
+		switch grouping {
+		case 7:
+			out.Event.Revenue = revenue
+			if !blocked && out.Event.Capacity > 0 && revenue.SeatsSold == out.Event.Capacity {
+				out.SoldOutSeconds = sinceOpen
+			}
+		case 3:
+			out.Daily = append(out.Daily, DayRevenue{Day: *day, SeatsSold: revenue.SeatsSold, NetMinor: revenue.NetMinor})
+		case 5:
+			out.Hours = append(out.Hours, Count{Key: *hour, Count: revenue.Bookings})
+		case 6:
+			// Rows outside the opening window form a NULL group, not a bar.
+			if openingHour != nil {
+				out.Opening = append(out.Opening, Count{Key: *openingHour, Count: revenue.Bookings})
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
 		return EventInsights{}, err
 	}
+	rows.Close()
 	rows, err = tx.Query(ctx, `SELECT s.section, count(*) FILTER (WHERE s.status <> 'BLOCKED'), count(b.id), coalesce(sum(b.price_minor), 0)::text
 		FROM seats s LEFT JOIN booking_seats bs ON bs.seat_id = s.id AND bs.released_at IS NULL
 		LEFT JOIN bookings b ON b.id = bs.booking_id
@@ -215,24 +256,6 @@ func (s *Store) EventInsights(ctx context.Context, userID, tenantID, eventID str
 		err := row.Scan(&s.Section, &s.Capacity, &s.SeatsSold, &s.GrossMinor)
 		return s, err
 	}); err != nil {
-		return EventInsights{}, err
-	}
-	// counts groups active bookings made in [from, to), either bound optional.
-	counts := func(key string, arg any, from, to *time.Time) ([]Count, error) {
-		rows, err := tx.Query(ctx, `SELECT `+key+` AS key, count(*) FROM booking_revenue
-			WHERE tenant_id = $1 AND event_id = $2 AND ($4::timestamptz IS NULL OR created_at >= $4)
-			AND ($5::timestamptz IS NULL OR created_at < $5) GROUP BY key ORDER BY key`, tenantID, eventID, arg, from, to)
-		if err != nil {
-			return nil, err
-		}
-		return pgx.CollectRows(rows, pgx.RowToStructByPos[Count])
-	}
-	if out.Hours, err = counts(`extract(hour FROM created_at AT TIME ZONE $3::text)::int`, out.TimeZone, nil, nil); err != nil {
-		return EventInsights{}, err
-	}
-	closes := out.SalesOpenAt.Add(24 * time.Hour)
-	if out.Opening, err = counts(`floor(extract(epoch FROM created_at - $3::timestamptz) / 3600)::int`,
-		out.SalesOpenAt, &out.SalesOpenAt, &closes); err != nil {
 		return EventInsights{}, err
 	}
 	return out, tx.Commit(ctx)
