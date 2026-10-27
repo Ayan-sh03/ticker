@@ -110,6 +110,10 @@ Fixes, each tracked as a GitHub issue and merged in pull requests #15–#18:
 | #13 One cancelled caller failed all waiters | The shared cache fetch runs on its own context. |
 | #14 Edge overhead | Slimmer nginx images, upstream keepalive, and larger proxy buffers. |
 
+An October 27 single-API chaos rerun exposed a recovery gap: Docker reassigned the restarted API's IP, while nginx kept the address resolved at startup. The API was listening again, but edge requests did not recover within the harness's 20-second window. The edge now uses Docker's embedded resolver (`127.0.0.11`, one-second answer validity, two-second lookup timeout) and shared upstream zones with dynamic resolution for both API and web. API keepalive and proxy buffering remain enabled.
+
+Manual validation forced three API address changes and one web address change by temporarily occupying released addresses in an isolated Docker network. All recovered without restarting or reloading nginx; its container ID, start time, and restart count stayed unchanged. Five consecutive successful probes were reached 1.97–2.48 seconds after API container start and 0.54 seconds after web container start. Probes returned temporary 502s during recovery. These are local recovery observations, not an availability guarantee. The final database audit passed all 16 checks with none skipped; nginx syntax and Compose configuration checks also passed.
+
 Results after the cache fix (same tests):
 
 | Test | Metric | Before | After |

@@ -127,8 +127,9 @@ The script runs `gofmt`, `go vet`, `go build`, `docker compose config`, and the 
 ```sh
 docker compose run --rm audit                      # check every database rule; exit code 1 if one fails
 docker compose --profile observability up -d       # Grafana on :3000, Prometheus on :9090
-docker compose restart edge                        # after you rebuild the API, so nginx finds the new container
 ```
+
+The edge refreshes API and web addresses through Docker DNS, so replacing either container does not require an edge restart. A single-instance restart still causes a brief outage while the service starts and DNS refreshes.
 
 ## Check it yourself
 
