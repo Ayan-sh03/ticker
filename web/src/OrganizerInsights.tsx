@@ -38,8 +38,9 @@ function duration(seconds: number) {
 }
 
 // Proportions as labelled bars; every value is also written out as text.
-function Bars({ label, rows }: { label: string; rows: { name: string; value: number; max: number; text: string }[] }) {
-  return <ul className="insight-bars" aria-label={label}>{rows.map(row => <li key={row.name}>
+// Muted rows are outcomes that did not become sales, so they never read like revenue.
+function Bars({ label, rows }: { label: string; rows: { name: string; value: number; max: number; text: string; muted?: boolean }[] }) {
+  return <ul className="insight-bars" aria-label={label}>{rows.map(row => <li key={row.name} data-muted={row.muted || undefined}>
     <span>{row.name}</span><span className="insight-value">{row.text}</span>
     <span className="insight-track" aria-hidden="true"><span style={{ width: `${row.max ? Math.min(100, row.value / row.max * 100) : 0}%` }} /></span>
   </li>)}</ul>;
@@ -49,7 +50,10 @@ function Bars({ label, rows }: { label: string; rows: { name: string; value: num
 function Columns({ label, columns }: { label: string; columns: { key: string; label: string; value: number; text: string; listed?: boolean }[] }) {
   const max = Math.max(...columns.map(column => column.value), 1);
   const width = 100 / columns.length;
+  const peak = columns.reduce((best, column) => column.value > best.value ? column : best, columns[0]);
   return <figure className="insight-columns">
+    {/* The tallest column stands in for a y-axis: every other column is a share of it. */}
+    {peak && peak.value > 0 && <p className="insight-peak">Highest: {peak.label} · {peak.text}</p>}
     <svg viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true">
       {columns.map((column, index) => { const height = column.value / max * 38;
         return <rect key={column.key} x={index * width + width * 0.15} width={width * 0.7} y={40 - height} height={height}><title>{`${column.label}: ${column.text}`}</title></rect>; })}
@@ -59,6 +63,19 @@ function Columns({ label, columns }: { label: string; columns: { key: string; la
       <table><tbody>{columns.filter(column => column.listed || column.value).map(column => <tr key={column.key}><th scope="row">{column.label}</th><td>{column.text}</td></tr>)}</tbody></table>
     </details>
   </figure>;
+}
+
+// Days without sales are missing from the API; fill them so the gaps show.
+function everyDay(daily: Event['daily']) {
+  if (!daily.length) return [];
+  const known = new Map(daily.map(day => [day.day.slice(0, 10), day]));
+  const days: (Event['daily'][number] & { filled?: boolean })[] = [];
+  const last = Date.parse(`${daily[daily.length - 1].day.slice(0, 10)}T00:00:00Z`);
+  for (let time = Date.parse(`${daily[0].day.slice(0, 10)}T00:00:00Z`); time <= last && days.length < 366; time += 86_400_000) {
+    const key = new Date(time).toISOString().slice(0, 10);
+    days.push(known.get(key) ?? { day: key, seats_sold: 0, net_minor: '0', filled: true });
+  }
+  return days;
 }
 
 function hourColumns(counts: Count[], label: (key: number) => string) {
@@ -115,18 +132,25 @@ export function EventInsights({ tenantID, eventID, userID, heading, onSessionExp
         ['Net revenue', event.bookings ? money(event.net_minor, event.currency) : '—'],
         ['Gross', event.bookings ? money(event.gross_minor, event.currency) : '—'],
         ['Platform fee', event.bookings ? money(event.fee_minor, event.currency) : '—'],
-        ['Sell-through', `${percent(event.seats_sold, event.capacity)} · ${event.seats_sold} of ${event.capacity}`],
+        ['Sell-through', `${percent(event.seats_sold, event.capacity)} · ${event.seats_sold} of ${event.capacity} unblocked`],
         ['Seats per booking', event.bookings ? (event.seats_sold / event.bookings).toFixed(1) : '—'],
         ['Hold to booking', percent(data.funnel.confirmed, data.funnel.holds)],
       ]} />
       <section className="insight-section"><h2>Funnel</h2>
-        <Bars label="Funnel" rows={([['Interested', data.funnel.interested], ['Holds', data.funnel.holds], ['Confirmed', data.funnel.confirmed],
-          ['Expired holds', data.funnel.expired], ['Cancelled holds', data.funnel.cancelled_holds], ['Cancelled bookings', data.funnel.cancelled_bookings]] as const)
+        <Bars label="Funnel" rows={([['Interested', data.funnel.interested], ['Holds', data.funnel.holds], ['Booked', data.funnel.confirmed]] as const)
           .map(([name, value]) => ({ name, value, max: Math.max(data.funnel.interested, data.funnel.holds), text: String(value) }))} />
       </section>
+      {data.funnel.holds > 0 && <section className="insight-section"><h2>How holds ended</h2>
+        <Bars label="How holds ended" rows={([['Booked', data.funnel.confirmed, false], ['Expired', data.funnel.expired, true],
+          ['Cancelled by customer', data.funnel.cancelled_holds, true],
+          ['Still open', data.funnel.holds - data.funnel.confirmed - data.funnel.expired - data.funnel.cancelled_holds, false]] as const)
+          .filter(([name, value]) => name !== 'Still open' || value > 0)
+          .map(([name, value, muted]) => ({ name, value, max: data.funnel.holds, text: `${value} · ${percent(value, data.funnel.holds)}`, muted }))} />
+        {data.funnel.cancelled_bookings > 0 && <p className="insight-note">{data.funnel.cancelled_bookings} of {plural(data.funnel.confirmed, 'booking')} {data.funnel.cancelled_bookings === 1 ? 'was' : 'were'} cancelled later.</p>}
+      </section>}
       {data.daily.length > 0 && <section className="insight-section"><h2>Net revenue by day</h2>
-        <Columns label="Net revenue by day" columns={data.daily.map(day => ({ key: day.day, label: new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone: 'UTC' }).format(new Date(day.day)),
-          value: Number(day.net_minor), text: `${money(day.net_minor, event.currency)}, ${plural(day.seats_sold, 'seat')}`, listed: true }))} />
+        <Columns label="Net revenue by day" columns={everyDay(data.daily).map(day => ({ key: day.day, label: new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone: 'UTC' }).format(new Date(day.day)),
+          value: Number(day.net_minor), text: `${money(day.net_minor, event.currency)}, ${plural(day.seats_sold, 'seat')}`, listed: !('filled' in day) }))} />
       </section>}
       <section className="insight-section"><h2>Sections</h2>
         <Bars label="Seats sold by section" rows={data.sections.map(section => ({ name: section.section, value: section.seats_sold, max: section.capacity,
