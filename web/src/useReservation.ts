@@ -3,7 +3,8 @@ import { ApiError, request, type Booking, type Reservation, type Session } from 
 
 type Pending = { kind: 'reserve'; key: string; seatIDs: string[] }
   | { kind: 'confirm'; key: string; reservationID: string }
-  | { kind: 'cancel'; reservationID: string };
+  | { kind: 'cancel'; reservationID: string }
+  | { kind: 'cancel_booking'; bookingID: string };
 type Saved = { reservationID?: string; bookingID?: string; pending?: Pending };
 class StorageError extends Error {}
 export const maxSeats = 6;
@@ -26,7 +27,8 @@ function readSaved(key: string): Saved {
       && pending.seatIDs.length >= 1 && pending.seatIDs.length <= maxSeats && pending.seatIDs.every(uuid)
       && new Set(pending.seatIDs).size === pending.seatIDs.length)
     || (pending.kind === 'confirm' && uuid(pending.key) && uuid(pending.reservationID))
-    || (pending.kind === 'cancel' && uuid(pending.reservationID)))) throw new Error('Invalid saved request');
+    || (pending.kind === 'cancel' && uuid(pending.reservationID))
+    || (pending.kind === 'cancel_booking' && uuid(pending.bookingID)))) throw new Error('Invalid saved request');
   return saved;
 }
 
@@ -109,6 +111,16 @@ export function useReservation(eventID: string, userID: string | undefined, onSe
   }
 
   async function replay(operation: Pending, signal: AbortSignal) {
+    // Cancelling a booking needs no key: repeating it changes nothing.
+    if (operation.kind === 'cancel_booking') {
+      const { booking: receipt } = await request<{ booking: Booking }>(`/bookings/${operation.bookingID}/cancel`, {
+        method: 'POST', headers: { 'X-Ticker-User': userID! }, signal,
+      });
+      if (signal.aborted) return;
+      if (!persist({ ...saved.current, pending: undefined })) throw new StorageError();
+      acceptReceipt(receipt, signal);
+      return;
+    }
     if (operation.kind === 'confirm') {
       const { booking: receipt } = await request<{ booking: Booking }>(`/reservations/${operation.reservationID}/confirm`, {
         method: 'POST', headers: { 'Idempotency-Key': operation.key, 'X-Ticker-User': userID! }, signal,
@@ -166,7 +178,8 @@ export function useReservation(eventID: string, userID: string | undefined, onSe
       if (operation && failure instanceof ApiError && failure.status >= 400 && failure.status < 500) {
         if (!persist({ ...saved.current, pending: undefined })) return;
         setError(failure.code === 'seat_unavailable' ? seatConflict
-          : failure.code === 'reservation_not_confirmable' ? 'This hold can no longer be confirmed. Checking its status.' : failure.message);
+          : failure.code === 'reservation_not_confirmable' ? 'This hold can no longer be confirmed. Checking its status.'
+          : failure.code === 'event_started' ? 'The event has started, so this booking can no longer be cancelled.' : failure.message);
         try { await read(active.signal); } catch { /* Keep the original failure and offer retry. */ }
       } else {
         setError(saved.current.pending ? 'The result is unknown. Retry the saved request to recover its outcome.'
@@ -255,6 +268,7 @@ export function useReservation(eventID: string, userID: string | undefined, onSe
     },
     confirm: () => { if (reservation && clock && seconds > 0) start({ kind: 'confirm', key: crypto.randomUUID(), reservationID: reservation.id }); },
     cancel: () => { if (reservation?.status === 'HELD') start({ kind: 'cancel', reservationID: reservation.id }); },
+    cancelBooking: () => { if (booking && booking.status !== 'CANCELLED') start({ kind: 'cancel_booking', bookingID: booking.id }); },
     retry: () => { void run(saved.current.pending); },
     clear: () => {
       if (!saved.current.pending && reservation && reservation.status !== 'HELD' && interruptRead() && persist({})) {

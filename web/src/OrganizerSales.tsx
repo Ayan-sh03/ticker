@@ -5,7 +5,7 @@ import { ErrorMessage } from './Feedback';
 import { usePrivateResource } from './usePrivateResource';
 
 type Customer = { display_name: string; email: string };
-type Booking = { id: string; status: 'CONFIRMED' | 'CANCELLED'; created_at: string; cancelled_at: string | null; customer: Customer; seat_labels: string[]; price_minor: number; total_minor: number; currency: string };
+type Booking = { id: string; status: 'CONFIRMED' | 'CANCELLED'; created_at: string; cancelled_at: string | null; cancelled_by_customer: boolean; customer: Customer; seat_labels: string[]; price_minor: number; total_minor: number; currency: string };
 type Hold = { id: string; status: 'HELD' | 'EXPIRED' | 'CANCELLED'; created_at: string; expires_at: string; ended_at: string | null; customer: Customer; seat_labels: string[] };
 type Summary = { bookings: number; cancelled_bookings: number; seats_sold: number; open_holds: number; expired_holds: number; cancelled_holds: number };
 type View = 'bookings' | 'open' | 'expired' | 'cancelled';
@@ -94,7 +94,7 @@ export function OrganizerSales({ tenantID, eventID, userID, heading, onSessionEx
           <div><p>{seats(row.seat_labels)}</p><p>Booked {when(row.created_at)}{row.cancelled_at && ` · Cancelled ${when(row.cancelled_at)}`}</p></div>
           <div className="organizer-sales-amount"><p className="price">{price({ price_minor: row.total_minor, currency: row.currency })}</p>
             {/* The API decides whether the event has started, by its own clock. */}
-            {row.status === 'CANCELLED' ? <p>Cancelled</p> : (confirming === row.id
+            {row.status === 'CANCELLED' ? <p>{row.cancelled_by_customer ? 'Cancelled by customer' : 'Cancelled by organizer'}</p> : (confirming === row.id
               ? <p className="organizer-sales-confirm">Seats go back on sale.{' '}
                 <button className="text-button" disabled={!!cancelling} onClick={() => void cancelBooking(row)}>{cancelling === row.id ? 'Cancelling…' : 'Cancel booking'}</button>{' '}
                 <button className="text-button" disabled={!!cancelling} onClick={() => setConfirming('')}>Keep</button></p>

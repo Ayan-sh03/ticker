@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"ticker/db/queries"
+	"ticker/internal/booking"
 )
 
 var ErrNotFound = errors.New("reservation not found")
@@ -322,12 +323,13 @@ func lockSeats(ctx context.Context, tx pgx.Tx, id string) error {
 // ErrEventStarted rejects cancelling a booking once its event has started.
 var ErrEventStarted = errors.New("event has started")
 
-// CancelBooking ends a confirmed reservation at an organizer's request: its
+// CancelBooking ends a confirmed reservation at its customer's or an
+// organizer's request (reason customer_request or organizer_request): its
 // booking is marked cancelled and its seats go back on sale. The caller holds
 // the event's share lock and the reservation's row lock; seats are locked
 // next, as in a confirmation. The start time is checked after every lock, so a
 // wait cannot carry the cancellation past it.
-func CancelBooking(ctx context.Context, tx pgx.Tx, id, actor string) error {
+func CancelBooking(ctx context.Context, tx pgx.Tx, id, actor, reason string) error {
 	if err := lockSeats(ctx, tx, id); err != nil {
 		return err
 	}
@@ -350,7 +352,42 @@ func CancelBooking(ctx context.Context, tx pgx.Tx, id, actor string) error {
 	if _, err := tx.Exec(ctx, `UPDATE bookings SET cancelled_at = clock_timestamp(), cancelled_by = $2 WHERE reservation_id = $1`, id, actor); err != nil {
 		return err
 	}
-	return release(ctx, tx, id, "CONFIRMED", "CANCELLED", actor, "organizer_request")
+	return release(ctx, tx, id, "CONFIRMED", "CANCELLED", actor, reason)
+}
+
+// CancelOwnBooking cancels the caller's confirmed booking until its event
+// starts. Locks follow the organizer path: the event's share lock, so a
+// start-date edit cannot run meanwhile, then the reservation, then its seats.
+// Repeating it returns the cancelled receipt unchanged.
+func (s *Store) CancelOwnBooking(ctx context.Context, userID, bookingID string) (booking.Receipt, error) {
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return booking.Receipt{}, err
+	}
+	defer tx.Rollback(context.Background())
+	var reservationID, status string
+	err = tx.QueryRow(ctx, `SELECT 1 FROM bookings b JOIN events e ON e.tenant_id = b.tenant_id AND e.id = b.event_id
+		WHERE b.id = $1 AND b.user_id = $2 FOR SHARE OF e`, bookingID, userID).Scan(new(int))
+	if err == nil {
+		err = tx.QueryRow(ctx, `SELECT r.id::text, r.status FROM bookings b JOIN reservations r ON r.id = b.reservation_id
+			WHERE b.id = $1 AND b.user_id = $2 FOR UPDATE OF r`, bookingID, userID).Scan(&reservationID, &status)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return booking.Receipt{}, booking.ErrNotFound
+	}
+	if err != nil {
+		return booking.Receipt{}, err
+	}
+	if status == "CONFIRMED" {
+		if err := CancelBooking(ctx, tx, reservationID, userID, "customer_request"); err != nil {
+			return booking.Receipt{}, err
+		}
+	}
+	receipt, err := booking.Read(ctx, tx, userID, bookingID)
+	if err != nil {
+		return booking.Receipt{}, err
+	}
+	return receipt, tx.Commit(ctx)
 }
 
 // release frees every seat of a held or confirmed reservation. An empty actor

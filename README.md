@@ -21,6 +21,7 @@ The main goal is simple: **a seat is never sold twice**, even when many people c
 - Sign up with a six-digit code from email, or log in.
 - Hold 1–6 seats for 5 minutes. If someone takes a seat first, the page names that seat and keeps the others selected.
 - Confirm the hold to get a booking and a receipt. Or cancel the hold.
+- Cancel your confirmed booking from its receipt before the event starts. Its seats go back on sale.
 - Mark an event as "interested".
 
 **Organizers** (each in their own workspace)
@@ -43,8 +44,6 @@ The main goal is simple: **a seat is never sold twice**, even when many people c
 - **React + TypeScript + Vite** make the UI. The seat map reuses unchanged rendering work during countdown updates. Reservation and receipt polling keep the same two-second interval and verify the expected account on each protected read.
 - **Docker frontend delivery** serves precompressed JavaScript/CSS and caches content-hashed assets. HTML revalidates so a new deployment is discovered.
 - An append-only **audit trail** records each hold, confirmation, expiry, and cancellation. A read-only **audit command** checks the database for broken rules.
-
-For the full design, read [docs/report.md](docs/report.md).
 
 ## How a seat is won
 
@@ -155,7 +154,7 @@ Audit at 2026-10-25T17:27:07Z: 115 reservations, 19 bookings.
   ok    overdue_hold                   The worker releases a hold soon after its deadline.
   ok    expired_before_deadline        A hold is never expired before its deadline.
   ok    audit_history_mismatch         Each tracked reservation's entries, in order, are the one path to its status: held, then confirmed, expired, or cancelled; a cancelled booking was confirmed first.
-  ok    audit_actor_mismatch           Customers hold, confirm, and cancel their own reservations; only the system expires them; the organizer who cancelled a booking is recorded on it.
+  ok    audit_actor_mismatch           Customers hold, confirm, and cancel their own reservations; only the system expires them; whoever cancelled a booking, its customer or an organizer, is recorded on it.
 
 16 checks, 0 failed, 0 skipped.
 ```
@@ -169,7 +168,7 @@ Each promise has a place in the code:
 | A seat never has two owners | `allocate` in `internal/reservation/reservation.go`; partial unique indexes in `db/migrations/000003` and `000009` |
 | A hold gets all of its seats or none | `hold` (the savepoint) in `internal/reservation/reservation.go` |
 | A retry never makes a second hold | `idempotency_records`, used by `Reserve` and `internal/reservation/confirm.go` |
-| No deadlocks | the lock order in `reservation.go`, `internal/organizer/seats.go`, and `internal/organizer/cancel.go` |
+| No deadlocks | the lock order in `reservation.go`, `internal/organizer/seats.go`, and `internal/organizer/cancel.go` (customers cancel through `CancelOwnBooking` in `reservation.go`) |
 | Prices freeze after the first hold | the event triggers in `db/migrations/000005_event_edits.up.sql` |
 | History cannot change | the append-only trigger in `db/migrations/000006_multi_seat_audit.up.sql` |
 
@@ -184,7 +183,7 @@ In the table, `{t}` is a workspace (tenant) ID, `{e}` is an event ID, and `{b}` 
 | Catalog | `GET /events`, `GET /events/{id}`, `GET /events/{id}/seats` |
 | Accounts | `POST /sessions` (log in), `DELETE /sessions/current` (log out), `GET /me`, `POST /signups/code`, `POST /signups` |
 | Reservations | `POST /reservations` (with `Idempotency-Key`), `GET` and `DELETE /reservations/{id}`, `POST /reservations/{id}/confirm` |
-| Bookings | `GET /bookings/{id}` |
+| Bookings | `GET /bookings/{id}`, `POST /bookings/{id}/cancel` |
 | Interest | `GET`, `PUT`, `DELETE /events/{id}/interest` |
 | Organizer | `GET /organizer/tenants`, `GET` and `POST /organizer/tenants/{t}/events`, `GET /organizer/tenants/{t}/insights` |
 | One event | `GET`, `PUT`, and `DELETE …`, `POST …/publish`, `GET` and `PATCH …/seats`, `GET …/bookings`, `GET …/holds`, `POST …/bookings/{b}/cancel`, `GET …/insights` |

@@ -9,6 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+
+	"ticker/internal/booking"
 )
 
 var ErrInvalidCursor = errors.New("invalid page cursor")
@@ -30,6 +32,9 @@ type Booking struct {
 	PriceMinor  int64      `json:"price_minor"`
 	TotalMinor  int64      `json:"total_minor"`
 	Currency    string     `json:"currency"`
+
+	// CancelledByCustomer is true when the customer cancelled the booking.
+	CancelledByCustomer bool `json:"cancelled_by_customer"`
 }
 
 // Hold is a reservation that never became a booking, or one still open.
@@ -212,14 +217,14 @@ func readBookings(ctx context.Context, tx pgx.Tx, where string, args ...any) ([]
 	rows, err := tx.Query(ctx, `SELECT b.id::text, b.created_at, b.cancelled_at, u.display_name, u.email,
 		ARRAY(SELECT s.label FROM booking_seats bs JOIN seats s ON s.id = bs.seat_id
 			WHERE bs.booking_id = b.id ORDER BY s.section, s.row_number, s.seat_number),
-		b.price_minor, b.currency
+		b.price_minor, b.currency, `+booking.CancelledByCustomer+`
 		FROM bookings b JOIN users u ON u.id = b.user_id `+where, args...)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Booking, error) {
 		var b Booking
-		err := row.Scan(&b.ID, &b.CreatedAt, &b.CancelledAt, &b.Customer.DisplayName, &b.Customer.Email, &b.SeatLabels, &b.PriceMinor, &b.Currency)
+		err := row.Scan(&b.ID, &b.CreatedAt, &b.CancelledAt, &b.Customer.DisplayName, &b.Customer.Email, &b.SeatLabels, &b.PriceMinor, &b.Currency, &b.CancelledByCustomer)
 		b.Status = "CONFIRMED"
 		if b.CancelledAt != nil {
 			b.Status = "CANCELLED"

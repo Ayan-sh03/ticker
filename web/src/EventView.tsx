@@ -115,6 +115,7 @@ export function EventView({ id, heading, session, checking, selectedIDs, select,
   const [list, setList] = useState(false);
   // Labels of selected seats that someone else took before this customer reserved.
   const [lost, setLost] = useState<string[]>([]);
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
   const hold = useReservation(id, session?.user.id, onSessionExpired);
   // Older replay responses may lack a quote; the fresh hold read supplies it
   // before confirmation becomes available.
@@ -173,17 +174,22 @@ export function EventView({ id, heading, session, checking, selectedIDs, select,
           <p className="price">{price(hold.booking ?? heldQuote ?? event.data.event)}<small>per seat</small></p>
           <div className="selection-detail">
             {hold.error && !(lost.length && hold.error === seatConflict) && <ErrorMessage message={hold.error} retry={hold.ready ? hold.retry : undefined} />}
-            {hold.busy && <p role="status">{hold.pending?.kind === 'reserve' ? 'Reserving…' : hold.pending?.kind === 'confirm' ? 'Confirming…' : hold.pending?.kind === 'cancel' ? 'Cancelling…' : 'Checking reservation…'}</p>}
-            {hold.pending && !hold.busy && <p>Your saved {hold.pending.kind === 'reserve' ? 'reservation' : hold.pending.kind === 'confirm' ? 'confirmation' : 'cancellation'} request needs recovery before another action.</p>}
+            {hold.busy && <p role="status">{hold.pending?.kind === 'reserve' ? 'Reserving…' : hold.pending?.kind === 'confirm' ? 'Confirming…' : hold.pending?.kind === 'cancel' ? 'Cancelling…' : hold.pending?.kind === 'cancel_booking' ? 'Cancelling booking…' : 'Checking reservation…'}</p>}
+            {hold.pending && !hold.busy && <p>Your saved {hold.pending.kind === 'reserve' ? 'reservation' : hold.pending.kind === 'confirm' ? 'confirmation' : hold.pending.kind === 'cancel_booking' ? 'booking cancellation' : 'cancellation'} request needs recovery before another action.</p>}
             {occupied && (ownedSeats.length ? <SeatSummary seats={ownedSeats} /> : <p className="selected-seat">Your {owned === 1 ? 'seat' : 'seats'}</p>)}
             {hold.booking && cancelled ? <div className="receipt" role="status">
               <h3>Booking cancelled</h3><p className="price">{total(hold.booking, hold.booking.seat_ids.length)}<small>for {seatCount(hold.booking.seat_ids.length)}, cancelled</small></p>
-              <p>The organizer cancelled this booking, and its seats went back on sale.</p>
+              <p>{hold.booking.cancelled_by_customer ? 'You' : 'The organizer'} cancelled this booking, and its seats went back on sale.</p>
               <dl><dt>Booking reference</dt><dd>{hold.booking.id}</dd>{hold.booking.cancelled_at && <><dt>Cancelled</dt><dd>{new Date(hold.booking.cancelled_at).toLocaleString()}</dd></>}</dl>
             </div> : hold.booking ? <div className="receipt" role="status">
               <h3>Booking confirmed</h3><p className="price">{total(hold.booking, hold.booking.seat_ids.length)}<small>for {seatCount(hold.booking.seat_ids.length)}</small></p>
               <dl><dt>Booking reference</dt><dd>{hold.booking.id}</dd><dt>Confirmed</dt><dd>{new Date(hold.booking.created_at).toLocaleString()}</dd></dl>
               <p>Keep this reference for your booking.</p>
+              {/* The API decides whether the event has started, by its own clock. */}
+              {confirmingCancel ? <p>Cancel this booking? Your seats go back on sale.{' '}
+                <button className="text-button" disabled={hold.busy || !!hold.pending || !hold.ready} onClick={() => { setConfirmingCancel(false); hold.cancelBooking(); }}>Yes, cancel</button>{' '}
+                <button className="text-button" onClick={() => setConfirmingCancel(false)}>Keep booking</button></p>
+                : <button className="text-button" disabled={hold.busy || !!hold.pending || !hold.ready} onClick={() => setConfirmingCancel(true)}>Cancel booking…</button>}
             </div> : hold.reservation?.status === 'HELD' ? <>
               <p>{!hold.clockReady ? 'Checking your hold before confirmation.' : hold.seconds > 0 ? `Your ${owned === 1 ? 'seat is' : 'seats are'} held.` : `Your hold deadline has passed. Waiting for the server to release the ${owned === 1 ? 'seat' : 'seats'}.`}</p>
               {heldQuote && <p className="price">{total(heldQuote, hold.reservation.seat_ids.length)}<small>for {seatCount(hold.reservation.seat_ids.length)}</small></p>}
