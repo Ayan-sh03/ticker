@@ -28,6 +28,7 @@ type Handler struct {
 func RegisterRoutes(mux *http.ServeMux, store *Store, sessions *identity.Handler, limiter *ratelimit.Limiter, logger *slog.Logger) {
 	h := &Handler{store: store, logger: logger}
 	mux.Handle("POST /reservations", sessions.RequireUser(limiter.Account("reserve", h.reserve)))
+	mux.Handle("GET /reservations/current", sessions.RequireUser(http.HandlerFunc(h.current)))
 	mux.Handle("GET /reservations/{reservationID}", sessions.RequireUser(http.HandlerFunc(h.get)))
 	mux.Handle("DELETE /reservations/{reservationID}", sessions.RequireUser(http.HandlerFunc(h.cancel)))
 	mux.Handle("POST /reservations/{reservationID}/confirm", sessions.RequireUser(limiter.Account("confirm", h.confirm)))
@@ -149,6 +150,30 @@ func (h *Handler) reserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeResult(w, result)
+}
+
+// current finds the caller's open hold for one event, so a hold made in another
+// tab or on another device shows up. It returns 404 when there is none.
+func (h *Handler) current(w http.ResponseWriter, r *http.Request) {
+	values := r.URL.Query()["event_id"]
+	var eventID string
+	ok := len(values) == 1
+	if ok {
+		eventID, ok = canonicalID(values[0])
+	}
+	if !ok {
+		writeResult(w, failure(400, "invalid_event_id", "provide one event_id UUID"))
+		return
+	}
+	session, _ := identity.CurrentSession(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	reservation, err := h.store.Open(ctx, session.User.ID, eventID)
+	if err != nil {
+		h.storeError(w, r, err)
+		return
+	}
+	writeResult(w, success(200, reservation))
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) { h.readOrCancel(w, r, false) }

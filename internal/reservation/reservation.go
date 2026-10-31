@@ -225,6 +225,15 @@ func (s *Store) Get(ctx context.Context, userID, id string) (Reservation, error)
 	return reservation, err
 }
 
+// Open returns the user's newest open hold for an event.
+func (s *Store) Open(ctx context.Context, userID, eventID string) (Reservation, error) {
+	reservation, err := scan(s.pool.QueryRow(ctx, queries.GetOpenReservation, userID, eventID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Reservation{}, ErrNotFound
+	}
+	return reservation, err
+}
+
 func (s *Store) Cancel(ctx context.Context, userID, id string) (Reservation, error) {
 	tx, err := s.begin(ctx)
 	if err != nil {
