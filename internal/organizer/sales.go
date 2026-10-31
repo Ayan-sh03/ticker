@@ -88,9 +88,17 @@ func (c Cursor) String() string { return c.CreatedAt.UTC().Format(time.RFC3339Na
 // is released, as customers see it.
 var HoldStates = map[string]bool{"open": true, "expired": true, "cancelled": true}
 
+// SearchPattern turns a search into an ILIKE pattern that matches it anywhere,
+// with LIKE wildcards in the search matched literally.
+func SearchPattern(search string) string {
+	return "%" + strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(search) + "%"
+}
+
 // ListBookings returns one page of the event's bookings, newest first, and the
-// event's totals, both from one snapshot.
-func (s *Store) ListBookings(ctx context.Context, userID, tenantID, eventID string, limit int, after *Cursor) (SalesSummary, []Booking, *Cursor, error) {
+// event's totals, both from one snapshot. A non-empty search keeps bookings
+// whose customer name or email contains it, or that include a seat with that
+// label; the totals still cover the whole event.
+func (s *Store) ListBookings(ctx context.Context, userID, tenantID, eventID, search string, limit int, after *Cursor) (SalesSummary, []Booking, *Cursor, error) {
 	tx, now, err := s.beginSnapshot(ctx, userID, tenantID, eventID)
 	if err != nil {
 		return SalesSummary{}, nil, nil, err
@@ -100,9 +108,17 @@ func (s *Store) ListBookings(ctx context.Context, userID, tenantID, eventID stri
 	if err != nil {
 		return SalesSummary{}, nil, nil, err
 	}
+	var pattern *string
+	if search != "" {
+		value := SearchPattern(search)
+		pattern = &value
+	}
 	bookings, err := readBookings(ctx, tx, `WHERE b.tenant_id = $1 AND b.event_id = $2
 		AND ($4::timestamptz IS NULL OR (b.created_at, b.id) < ($4, $5::uuid))
-		ORDER BY b.created_at DESC, b.id DESC LIMIT $3`, tenantID, eventID, limit, cursorTime(after), cursorID(after))
+		AND ($6::text IS NULL OR u.display_name ILIKE $6 OR u.email ILIKE $6 OR EXISTS (
+			SELECT 1 FROM booking_seats bs JOIN seats s ON s.id = bs.seat_id
+			WHERE bs.booking_id = b.id AND upper(s.label) = upper($7)))
+		ORDER BY b.created_at DESC, b.id DESC LIMIT $3`, tenantID, eventID, limit, cursorTime(after), cursorID(after), pattern, search)
 	if err != nil {
 		return SalesSummary{}, nil, nil, err
 	}

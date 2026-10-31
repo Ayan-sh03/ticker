@@ -9,7 +9,9 @@ import (
 	"mime"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -356,10 +358,19 @@ func (h *Handler) listBookings(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	values := r.URL.Query()["q"]
+	search := ""
+	if len(values) == 1 {
+		search = strings.TrimSpace(values[0])
+	}
+	if len(values) > 1 || utf8.RuneCountInString(search) > 100 || !utf8.ValidString(search) {
+		writeError(w, http.StatusBadRequest, "invalid_search", "q must be one search of up to 100 characters")
+		return
+	}
 	session, _ := identity.CurrentSession(r.Context())
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	summary, bookings, next, err := h.store.ListBookings(ctx, session.User.ID, tenantID, eventID, limit, after)
+	summary, bookings, next, err := h.store.ListBookings(ctx, session.User.ID, tenantID, eventID, search, limit, after)
 	if err != nil {
 		h.storeError(w, r, err)
 		return
