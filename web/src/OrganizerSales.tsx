@@ -26,10 +26,14 @@ export function OrganizerSales({ tenantID, eventID, userID, heading, onSessionEx
   // Each entry is the "after" cursor of a page past the first, so Previous can step back.
   const [pages, setPages] = useState<string[]>([]);
   const after = pages.length ? `&after=${encodeURIComponent(pages[pages.length - 1])}` : '';
+  // The search in the box, and the one the list shows; a search runs on submit.
+  const [draft, setDraft] = useState('');
+  const [search, setSearch] = useState('');
+  const query = view === 'bookings' && search ? `&q=${encodeURIComponent(search)}` : '';
   const event = usePrivateResource<{ event: OrganizerEvent }>(path, userID, onSessionExpired);
   // Totals come with every page, so they always match the rows shown.
   const list = usePrivateResource<{ summary: Summary; bookings?: Booking[]; holds?: Hold[]; next: string | null }>(view === 'bookings'
-    ? `${path}/bookings?limit=${pageSize}${after}` : `${path}/holds?status=${view}&limit=${pageSize}${after}`, userID, onSessionExpired);
+    ? `${path}/bookings?limit=${pageSize}${after}${query}` : `${path}/holds?status=${view}&limit=${pageSize}${after}`, userID, onSessionExpired);
   // The booking awaiting a second click to cancel, and the one being cancelled.
   const [confirming, setConfirming] = useState('');
   const [cancelling, setCancelling] = useState('');
@@ -38,7 +42,8 @@ export function OrganizerSales({ tenantID, eventID, userID, heading, onSessionEx
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { if (event.data) heading.current?.focus(); }, [event.data, heading]);
-  useEffect(() => { setConfirming(''); setMessage(''); setFailure(''); }, [view, pages]);
+  useEffect(() => { setConfirming(''); setMessage(''); setFailure(''); }, [view, pages, search]);
+  const runSearch = (value: string) => { setDraft(value); setSearch(value.trim()); setPages([]); };
   const denied = event.forbidden || list.forbidden;
   const summary = denied ? undefined : list.data?.summary;
   // Pick by view: for one render after a switch, data may still hold the other list.
@@ -84,10 +89,16 @@ export function OrganizerSales({ tenantID, eventID, userID, heading, onSessionEx
           onClick={() => { setView(item.value); setPages([]); if (view === item.value) list.retry(); }}>{item.label}</button>)}
         <button className="button" disabled={!list.data && !list.error} onClick={() => list.retry()}>Refresh</button>
       </div>
+      {view === 'bookings' && <form className="organizer-field organizer-search" role="search" onSubmit={submit => { submit.preventDefault(); runSearch(draft); }}>
+        <label htmlFor="booking-search">Search bookings</label>
+        <div><input id="booking-search" type="search" value={draft} maxLength={100} placeholder="Name, email, or seat such as R1-S4"
+          onChange={change => { setDraft(change.target.value); if (!change.target.value && search) runSearch(''); }} />
+          <button className="button">Search</button></div>
+      </form>}
       {message && <p role="status">{message}</p>}
       {failure && <p className="error" role="alert">{failure}</p>}
       {!rows && !error && <p className="loading" role="status">Loading…</p>}
-      {rows && rows.length === 0 && <p className="organizer-empty">{pages.length ? 'No more entries.' : view === 'bookings' ? 'No bookings yet.' : `No ${views.find(item => item.value === view)!.label.toLowerCase()} yet.`}</p>}
+      {rows && rows.length === 0 && <p className="organizer-empty">{pages.length ? 'No more entries.' : view === 'bookings' ? (search ? `No bookings match “${search}”.` : 'No bookings yet.') : `No ${views.find(item => item.value === view)!.label.toLowerCase()} yet.`}</p>}
       {rows && rows.length > 0 && <ul className="organizer-sales">{view === 'bookings'
         ? (rows as Booking[]).map(row => <li key={row.id} data-status={row.status}>
           <div><p className="organizer-sales-name">{row.customer.display_name}</p><p>{row.customer.email}</p></div>

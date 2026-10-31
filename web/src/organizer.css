@@ -359,6 +359,9 @@
 .organizer-sales-summary dd { font-size: 1.5rem; font-weight: 550; }
 .organizer-tabs { display: flex; flex-wrap: wrap; gap: var(--space-sm); margin-block: var(--space-xl); }
 .organizer-tabs .button[aria-pressed='true'] { background: var(--color-ink); color: var(--color-paper); border-color: var(--color-ink); }
+.organizer-search { display: grid; gap: var(--space-xs); max-width: 32rem; margin-bottom: var(--space-xl); }
+.organizer-search > div { display: flex; gap: var(--space-sm); }
+.organizer-search input { flex: 1; min-width: 0; }
 .organizer-sales { border-top: 1px solid var(--color-rule); }
 .organizer-sales > li { display: grid; gap: var(--space-sm); padding-block: var(--space-lg); border-bottom: 1px solid var(--color-rule); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
 .organizer-sales > li > * { min-width: 0; overflow-wrap: anywhere; }
