@@ -33,13 +33,14 @@ Rules the database enforces on its own:
 
 ## 3. How a seat is won
 
-All writes run in `READ COMMITTED` transactions. Reservation transactions (reserve, confirm, cancel, and worker expiry) set a 250 ms lock timeout and a 1 s statement timeout. Organizer seat blocking and booking cancellation set a 1 s lock timeout after the membership check, so the membership lock wait itself is not covered. Other writes, such as event edits, interest, and sessions, are bounded only by the request deadline. Row locks decide ownership. Every path takes its locks in the same order, so two requests can never wait on each other in a circle:
+All writes run in `READ COMMITTED` transactions. Reservation transactions (reserve, confirm, customer hold and booking cancellation, and worker expiry) set a 250 ms lock timeout and a 1 s statement timeout. Organizer seat blocking and booking cancellation set a 1 s lock timeout after the membership check, so the membership lock wait itself is not covered. Other writes, such as event edits, interest, and sessions, are bounded only by the request deadline. Row locks decide ownership. Every path takes its locks in the same order, so two requests can never wait on each other in a circle:
 
 | Operation | Lock order |
 |---|---|
 | Reserve | request key → event `FOR SHARE` → overdue holds on the requested seats → seats by ascending ID |
 | Confirm | request key → reservation `FOR UPDATE` → its seats by ID |
-| Customer cancel, worker expiry | reservation → its seats by ID (the worker uses `SKIP LOCKED`) |
+| Customer hold cancel, worker expiry | reservation → its seats by ID (the worker uses `SKIP LOCKED`) |
+| Customer booking cancellation | event `FOR SHARE` → reservation → its seats by ID |
 | Organizer seat blocking | membership → event `FOR SHARE` → overdue holds → seats by ID |
 | Organizer booking cancellation | membership → event `FOR SHARE` → reservation → its seats by ID |
 | Event edit, publish, delete | membership → event `FOR UPDATE` |
@@ -82,7 +83,7 @@ It prints violations with examples and exits 1. It never repairs data, because a
 
 - **Seat blocking.** 1–200 seats per request, all or nothing. Sold and held seats cannot change.
 - **Bookings view.** Pages use a `(created_at, id)` cursor, so rows that change while someone pages never shift later pages. Counts and rows come from one `REPEATABLE READ` snapshot and one database time, so a hold never counts as both open and expired. Indexes match the page order.
-- **Booking cancellation.** It keeps all rows as history and releases the seats. The audit trail records `CONFIRMED → CANCELLED` with the organizer as actor.
+- **Booking cancellation.** It keeps all rows as history and releases the seats. The audit trail records `CONFIRMED → CANCELLED` with the organizer as actor. Customers can cancel their own bookings the same way, recorded as `customer_request` with the customer as actor; the receipt and the bookings view say who cancelled.
 - **Insights.** Revenue has one definition, the `booking_revenue` view: active bookings, at the price and fee rate saved on each booking, with the fee rounded half up. Because each booking stores its rate, changing a tenant's fee affects only new bookings. Days and hours use the tenant's time zone, which must be a named zone such as Asia/Kolkata; a trigger rejects anything PostgreSQL does not know. The funnel runs from interest to holds to confirmed, expired, and cancelled. Money totals leave the database as exact decimal strings, because a sum can exceed a 64-bit integer and JavaScript loses precision above 2^53. Timing only counts bookings made after the current sales opening, since organizers can move it, and the sell-out time is reported as unknown while seats are blocked, because blocking lowers capacity after the fact. Page views are not tracked.
 
 ## 8. Load testing
@@ -130,6 +131,6 @@ These are breakpoint tests: k6 raises the arrival rate past what the stack can s
 
 - **PostgreSQL decides everything.** No distributed locks, queues, or caches take part in ownership. This is simpler and safe, but one primary database is the ceiling for writes to a single event.
 - **Short cache, small lie.** A public seat-map snapshot is served for 2 seconds after it is built, so it can be a little older than that once query time is added. It may show a seat as free that was just taken. The reserve request then says so, and ownership is never wrong.
-- **No payments or refunds.** Confirmation stands in for payment, and organizer cancellation does not refund.
-- **Not built:** customer cancellation of confirmed bookings, organizer signup, password recovery, editing fee rates or time zones in the UI, and page-view tracking.
+- **No payments or refunds.** Confirmation stands in for payment, and cancellation does not refund.
+- **Not built:** organizer signup, password recovery, editing fee rates or time zones in the UI, and page-view tracking.
 - **No automated tests, by choice.** Correctness rests on database constraints, the audit command, CI checks, and manual smoke tests. A race-test suite would be the next thing to add.
