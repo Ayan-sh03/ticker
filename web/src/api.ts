@@ -9,6 +9,8 @@ export interface Event {
   currency: string;
   sales_open_at: string;
   starts_at: string;
+  // Only the event list sends this: seats on sale right now.
+  seats_available?: number;
 }
 
 export interface Seat {

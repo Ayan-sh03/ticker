@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { ApiError, date, price, request, useResource, type Event, type Session } from './api';
+import { ApiError, date, price, request, sale, useResource, when, type Event, type Session } from './api';
 import { EventView } from './EventView';
 import { ErrorMessage } from './Feedback';
 import { Organizer } from './Organizer';
@@ -107,11 +107,18 @@ function EventIndex({ heading }: { heading: React.RefObject<HTMLHeadingElement |
     {!data && !error && <p className="loading" role="status">Loading events…</p>}
     {data && <>
       {data.events.length === 0 && <p>No events are listed here yet.</p>}
-      <ul className="event-list">{data.events.map(event => <li key={event.id}>
-        <div className="event-entry"><div><p className="eyebrow">{date(event)}</p><h2>{event.title}</h2><p>{event.venue_name}</p></div>
-          <div className="event-action"><span className="price">{price(event)}<small>per seat</small></span><a className="button button-solid" href={`#${event.id}`} aria-label={`View seats for ${event.title}`}>View seats <span aria-hidden="true">↗</span></a></div>
-        </div>
-      </li>)}</ul>
+      <ul className="event-list">{data.events.map(event => {
+        const state = sale(event);
+        const soldOut = state !== 'started' && event.seats_available === 0;
+        return <li key={event.id}>
+          <div className="event-entry"><div><p className="eyebrow">{date(event)}</p><h2>{event.title}</h2><p>{event.venue_name}</p></div>
+            <div className="event-action"><span className="price">{price(event)}<small>per seat</small>
+              {state !== 'open' ? <small className="sale-state">{state === 'started' ? 'Event started' : `On sale ${when(event.sales_open_at)}`}</small>
+                : event.seats_available !== undefined && <small className="sale-state">{soldOut ? 'Sold out' : `${event.seats_available} ${event.seats_available === 1 ? 'seat' : 'seats'} left`}</small>}</span>
+              <a className={`button ${state === 'open' && !soldOut ? 'button-solid' : ''}`} href={`#${event.id}`} aria-label={`${state === 'started' ? 'View' : 'View seats for'} ${event.title}`}>{state === 'started' ? 'View event' : 'View seats'}</a></div>
+          </div>
+        </li>;
+      })}</ul>
     </>}
     {(offset > 0 || data?.events.length === 20) && <nav className="pagination" aria-label="Event pages">
       <button className="button" disabled={offset === 0} onClick={() => setOffset(value => value - 20)}>Previous</button>
