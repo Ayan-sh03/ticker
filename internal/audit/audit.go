@@ -114,13 +114,14 @@ func checks(o Options) (run, skipped []Check) {
 				WHEN EXISTS (SELECT 1 FROM bookings b WHERE b.reservation_id = t.id) THEN
 					CASE t.status WHEN 'CONFIRMED' THEN '>HELD,HELD>CONFIRMED' ELSE '>HELD,HELD>CONFIRMED,CONFIRMED>CANCELLED' END
 				ELSE '>HELD,HELD>' || t.status END`},
-		{Name: "audit_actor_mismatch", Rule: "Customers hold, confirm, and cancel their own reservations; only the system expires them; the organizer who cancelled a booking is recorded on it.", query: `
+		{Name: "audit_actor_mismatch", Rule: "Customers hold, confirm, and cancel their own reservations; only the system expires them; whoever cancelled a booking, its customer or an organizer, is recorded on it.", query: `
 			SELECT a.id::text FROM audit_entries a JOIN reservations r ON r.id = a.reservation_id
 			LEFT JOIN bookings b ON b.reservation_id = r.id
 			WHERE CASE WHEN a.to_status = 'EXPIRED'
 				THEN a.actor_user_id IS NOT NULL OR a.reason <> 'deadline_passed'
 				WHEN a.from_status = 'CONFIRMED'
-				THEN a.actor_user_id IS DISTINCT FROM b.cancelled_by OR a.reason <> 'organizer_request'
+				THEN a.actor_user_id IS DISTINCT FROM b.cancelled_by OR a.reason NOT IN ('organizer_request', 'customer_request')
+					OR (a.reason = 'customer_request' AND a.actor_user_id IS DISTINCT FROM r.user_id)
 				ELSE a.actor_user_id IS DISTINCT FROM r.user_id OR a.reason <> 'customer_request' END`},
 	}
 	for _, c := range all {
