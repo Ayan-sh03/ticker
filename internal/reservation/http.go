@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"ticker/internal/booking"
 	"ticker/internal/identity"
 	"ticker/internal/platform/ratelimit"
 )
@@ -30,6 +31,35 @@ func RegisterRoutes(mux *http.ServeMux, store *Store, sessions *identity.Handler
 	mux.Handle("GET /reservations/{reservationID}", sessions.RequireUser(http.HandlerFunc(h.get)))
 	mux.Handle("DELETE /reservations/{reservationID}", sessions.RequireUser(http.HandlerFunc(h.cancel)))
 	mux.Handle("POST /reservations/{reservationID}/confirm", sessions.RequireUser(limiter.Account("confirm", h.confirm)))
+	mux.Handle("POST /bookings/{bookingID}/cancel", sessions.RequireUser(limiter.Account("cancel_booking", h.cancelBooking)))
+}
+
+// cancelBooking needs no request key: repeating it changes nothing.
+func (h *Handler) cancelBooking(w http.ResponseWriter, r *http.Request) {
+	id, ok := canonicalID(r.PathValue("bookingID"))
+	if !ok {
+		writeResult(w, failure(400, "invalid_booking_id", "booking ID must be a UUID"))
+		return
+	}
+	session, _ := identity.CurrentSession(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	receipt, err := retryLocks(ctx, func() (booking.Receipt, error) { return h.store.CancelOwnBooking(ctx, session.User.ID, id) })
+	switch {
+	case errors.Is(err, booking.ErrNotFound):
+		writeResult(w, failure(404, "booking_not_found", "booking not found"))
+	case errors.Is(err, ErrEventStarted):
+		writeResult(w, failure(409, "event_started", "bookings cannot be cancelled once the event has started"))
+	case err != nil:
+		h.logger.Error("booking cancellation failed", "path", r.URL.Path, "error", err)
+		w.Header().Set("Retry-After", "1")
+		writeResult(w, failure(503, "booking_unavailable", "the cancellation may not have been saved; retrying is safe"))
+	default:
+		body, _ := json.Marshal(struct {
+			Booking booking.Receipt `json:"booking"`
+		}{receipt})
+		writeResult(w, Result{Status: 200, Body: body})
+	}
 }
 
 func (h *Handler) confirm(w http.ResponseWriter, r *http.Request) {

@@ -42,7 +42,7 @@ func (s *Store) CancelBooking(ctx context.Context, userID, tenantID, eventID, bo
 		return Booking{}, err
 	}
 	if status == "CONFIRMED" {
-		if err := reservation.CancelBooking(ctx, tx, reservationID, userID); err != nil {
+		if err := reservation.CancelBooking(ctx, tx, reservationID, userID, "organizer_request"); err != nil {
 			return Booking{}, err
 		}
 	}
