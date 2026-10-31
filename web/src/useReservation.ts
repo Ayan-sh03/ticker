@@ -182,8 +182,8 @@ export function useReservation(eventID: string, userID: string | undefined, onSe
           : failure.code === 'event_started' ? 'The event has started, so this booking can no longer be cancelled.' : failure.message);
         try { await read(active.signal); } catch { /* Keep the original failure and offer retry. */ }
       } else {
-        setError(saved.current.pending ? 'The result is unknown. Retry the saved request to recover its outcome.'
-          : 'Unable to refresh your reservation or receipt. Retry before continuing.');
+        setError(saved.current.pending ? 'We could not tell whether your last request went through. Retrying is safe: it never makes a second hold or booking.'
+          : 'Your reservation or receipt could not refresh. Try again before continuing.');
         setClock(undefined);
       }
     } finally {

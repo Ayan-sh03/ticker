@@ -7,6 +7,7 @@ export interface Event {
   venue_name: string;
   price_minor: number;
   currency: string;
+  sales_open_at: string;
   starts_at: string;
 }
 
@@ -147,6 +148,16 @@ export function price(event: Pick<Event, 'price_minor' | 'currency'>) {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: event.currency }).format(event.price_minor / 100);
 }
 
+export function when(iso: string) {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso));
+}
+
 export function date(event: Event) {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(event.starts_at));
+  return when(event.starts_at);
+}
+
+// A hint from the browser clock for what to offer; the API decides with its own.
+export function sale(event: Event, now = Date.now()): 'upcoming' | 'open' | 'started' {
+  if (now >= Date.parse(event.starts_at)) return 'started';
+  return now < Date.parse(event.sales_open_at) ? 'upcoming' : 'open';
 }

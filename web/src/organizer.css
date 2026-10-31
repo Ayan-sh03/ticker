@@ -238,12 +238,12 @@
   min-height: 48px;
 }
 
-.organizer .button-danger {
+.button-danger {
   border-color: var(--color-error);
   color: var(--color-error);
 }
 
-.organizer .button-danger:active:not(:disabled) {
+.button-danger:active:not(:disabled) {
   background: var(--color-error);
   color: var(--color-paper);
 }
@@ -410,7 +410,7 @@
 }
 
 @media (hover: hover) {
-  .organizer .button-danger:hover:not(:disabled) {
+  .button-danger:hover:not(:disabled) {
     background: var(--color-error);
     color: var(--color-paper);
   }
