@@ -17,19 +17,19 @@ The main goal is simple: **a seat is never sold twice**, even when many people c
 ## What it does
 
 **Customers**
-- See published events and live seat availability.
+- See published events, how many seats each has left, and live seat availability.
 - Sign up with a six-digit code from email, or log in.
 - Hold 1–6 seats for 5 minutes. If someone takes a seat first, the page names that seat and keeps the others selected.
-- Confirm the hold to get a booking and a receipt. Or cancel the hold.
+- Confirm the hold to get a booking and a receipt. Or cancel the hold. A hold made in one tab or device shows up in the others.
 - Cancel your confirmed booking from its receipt before the event starts. Its seats go back on sale.
 - Mark an event as "interested".
 
 **Organizers** (each in their own workspace)
 - Make private drafts, edit them, and publish them. Delete an event only if nobody ever reserved a seat in it.
 - Block or unblock up to 200 seats in one change. The change applies to all of the seats or to none.
-- Page through bookings and holds (open, expired, cancelled) with live counts.
+- Page through bookings and holds (open, expired, cancelled) with live counts. Search bookings by customer name, email, or seat.
 - Cancel a confirmed booking before the event starts. Its seats go back on sale.
-- Read insights: revenue after the platform fee (5% by default), how many seats sold, a funnel from interest to bookings, revenue by day, and the busiest hours.
+- Read insights: revenue after the platform fee (5% by default), how many seats sold, a funnel from interest to bookings, how every hold ended, revenue by day, and the busiest hours.
 
 ## How it is built
 
@@ -182,11 +182,11 @@ In the table, `{t}` is a workspace (tenant) ID, `{e}` is an event ID, and `{b}` 
 |---|---|
 | Catalog | `GET /events`, `GET /events/{id}`, `GET /events/{id}/seats` |
 | Accounts | `POST /sessions` (log in), `DELETE /sessions/current` (log out), `GET /me`, `POST /signups/code`, `POST /signups` |
-| Reservations | `POST /reservations` (with `Idempotency-Key`), `GET` and `DELETE /reservations/{id}`, `POST /reservations/{id}/confirm` |
+| Reservations | `POST /reservations` (with `Idempotency-Key`), `GET /reservations/current?event_id={e}` (your open hold for an event), `GET` and `DELETE /reservations/{id}`, `POST /reservations/{id}/confirm` |
 | Bookings | `GET /bookings/{id}`, `POST /bookings/{id}/cancel` |
 | Interest | `GET`, `PUT`, `DELETE /events/{id}/interest` |
 | Organizer | `GET /organizer/tenants`, `GET` and `POST /organizer/tenants/{t}/events`, `GET /organizer/tenants/{t}/insights` |
-| One event | `GET`, `PUT`, and `DELETE …`, `POST …/publish`, `GET` and `PATCH …/seats`, `GET …/bookings`, `GET …/holds`, `POST …/bookings/{b}/cancel`, `GET …/insights` |
+| One event | `GET`, `PUT`, and `DELETE …`, `POST …/publish`, `GET` and `PATCH …/seats`, `GET …/bookings` (`?q=` searches), `GET …/holds`, `POST …/bookings/{b}/cancel`, `GET …/insights` |
 
 ## Deploy
 
