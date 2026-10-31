@@ -365,13 +365,16 @@ func release(ctx context.Context, tx pgx.Tx, id, from, status, actor, reason str
 	return audit(ctx, tx, id, actor, from, status, reason, "")
 }
 
+// insertAudit is shared by individual transitions and batched confirmation.
+const insertAudit = `INSERT INTO audit_entries
+		(tenant_id, event_id, reservation_id, actor_user_id, from_status, to_status, reason, request_key)
+		SELECT tenant_id, event_id, id, NULLIF($2, '')::uuid, NULLIF($3, ''), $4, $5, NULLIF($6, '')
+		FROM reservations WHERE id = $1`
+
 // audit records a transition in the same transaction as the state change, so
 // both commit or neither does. Empty actor, from, and key values are stored as NULL.
 func audit(ctx context.Context, tx pgx.Tx, id, actor, from, to, reason, key string) error {
-	tag, err := tx.Exec(ctx, `INSERT INTO audit_entries
-		(tenant_id, event_id, reservation_id, actor_user_id, from_status, to_status, reason, request_key)
-		SELECT tenant_id, event_id, id, NULLIF($2, '')::uuid, NULLIF($3, ''), $4, $5, NULLIF($6, '')
-		FROM reservations WHERE id = $1`, id, actor, from, to, reason, key)
+	tag, err := tx.Exec(ctx, insertAudit, id, actor, from, to, reason, key)
 	if err == nil && tag.RowsAffected() != 1 {
 		err = errors.New("audit target reservation not found")
 	}

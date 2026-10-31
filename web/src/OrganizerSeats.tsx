@@ -1,8 +1,11 @@
 /* Hallmark · component: organizer seat availability · genre: modern-minimal · theme: existing Coral tokens */
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { ApiError, request, type OrganizerEvent, type Seat } from './api';
 import { ErrorMessage } from './Feedback';
 import { usePrivateResource } from './usePrivateResource';
+import { groupSeats } from './seatGroups';
+
+const emptySeats: Seat[] = [];
 
 // One request changes at most this many seats, all or none.
 const selectLimit = 200;
@@ -28,18 +31,14 @@ export function OrganizerSeats({ tenantID, eventID, userID, heading, onSessionEx
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { if (event.data) heading.current?.focus(); }, [event.data, heading]);
 
-  const seats = inventory.data?.seats ?? [];
+  const seats = inventory.data?.seats ?? emptySeats;
   const chosen = seats.filter(seat => selected.includes(seat.id) && changeable(seat));
   const toBlock = chosen.filter(seat => seat.status === 'AVAILABLE');
   const toUnblock = chosen.filter(seat => seat.status === 'BLOCKED');
   const full = chosen.length >= selectLimit;
   const counts = { AVAILABLE: 0, HELD: 0, SOLD: 0, BLOCKED: 0 };
   for (const seat of seats) counts[seat.status]++;
-  const groups = new Map<string, Seat[]>();
-  for (const seat of seats) {
-    const group = `${seat.section} / Row ${seat.row_number}`;
-    groups.set(group, [...(groups.get(group) ?? []), seat]);
-  }
+  const groups = useMemo(() => groupSeats(seats), [seats]);
 
   function failed(failure: unknown) {
     if (failure instanceof ApiError && failure.status === 401) { inventory.deny(); onSessionExpired(); return true; }

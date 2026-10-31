@@ -36,6 +36,7 @@ export function useReservation(eventID: string, userID: string | undefined, onSe
   eventID = eventID.toLowerCase();
   const storageKey = `ticker:reservation:v1:${userID}:${eventID}`;
   const saved = useRef<Saved>({});
+  const receiptID = useRef<string | undefined>(undefined);
   const alive = useRef(false);
   const working = useRef(false);
   const mutating = useRef(false);
@@ -77,8 +78,25 @@ export function useReservation(eventID: string, userID: string | undefined, onSe
     setNow(performance.now());
   }
 
-  async function read(signal: AbortSignal) {
+  function acceptReceipt(receipt: Booking, signal: AbortSignal) {
+    if (!alive.current || signal.aborted) return;
+    if (receipt.event_id.toLowerCase() !== eventID || receipt.reservation_id.toLowerCase() !== saved.current.reservationID?.toLowerCase()) {
+      throw new Error('Booking does not match this reservation');
+    }
+    receiptID.current = receipt.id;
+    setBooking(receipt);
+    setReservation(previous => previous ? { ...previous, status: receipt.status ?? 'CONFIRMED', booking_id: receipt.id } : previous);
+  }
+
+  async function read(signal: AbortSignal, pollReceipt = false) {
     if (!saved.current.reservationID) return;
+    // A receipt contains the live cancellation status. Its protected endpoint
+    // checks the cookie owner and X-Ticker-User just like the reservation read.
+    if (pollReceipt && receiptID.current) {
+      const { booking: receipt } = await request<{ booking: Booking }>(`/bookings/${receiptID.current}`, { signal, headers: { 'X-Ticker-User': userID! } });
+      acceptReceipt(receipt, signal);
+      return;
+    }
     const started = performance.now();
     const { reservation: value } = await request<{ reservation: Reservation }>(`/reservations/${saved.current.reservationID}`, { signal, headers: { 'X-Ticker-User': userID! } });
     if (!alive.current || signal.aborted) return;
@@ -86,7 +104,7 @@ export function useReservation(eventID: string, userID: string | undefined, onSe
     accept(value, performance.now() - started);
     if (value.booking_id) {
       const { booking: receipt } = await request<{ booking: Booking }>(`/bookings/${value.booking_id}`, { signal, headers: { 'X-Ticker-User': userID! } });
-      if (alive.current && !signal.aborted) setBooking(receipt);
+      acceptReceipt(receipt, signal);
     }
   }
 
@@ -122,11 +140,13 @@ export function useReservation(eventID: string, userID: string | undefined, onSe
     const active = new AbortController();
     controller.current = active;
     try {
-      // Cookies can change in another tab. Never replay this account's saved
-      // request until the server verifies that it is still the signed-in owner.
-      const identity = await request<Session>('/me', { signal: active.signal, headers: { 'X-Ticker-User': userID! } });
-      if (identity.user.id !== userID) throw new ApiError(401, 'The signed-in account changed.');
-      if (operation) await replay(operation, active.signal); else await read(active.signal);
+      // Keep the identity preflight for setup, recovery, and mutations. Normal
+      // polls verify it on the protected read itself, avoiding a second lookup.
+      if (!silent) {
+        const identity = await request<Session>('/me', { signal: active.signal, headers: { 'X-Ticker-User': userID! } });
+        if (identity.user.id !== userID) throw new ApiError(401, 'The signed-in account changed.');
+      }
+      if (operation) await replay(operation, active.signal); else await read(active.signal, silent);
       if (alive.current && !active.signal.aborted) setError('');
     } catch (failure) {
       if (!alive.current || active.signal.aborted) return;
@@ -168,6 +188,7 @@ export function useReservation(eventID: string, userID: string | undefined, onSe
     if (!userID) return () => { alive.current = false; };
     try {
       saved.current = readSaved(storageKey);
+      receiptID.current = saved.current.bookingID;
       // Verify writes before enabling any action, even when there is no record.
       if (!persist(saved.current)) return () => { alive.current = false; };
       storageFailed.current = false;
@@ -183,7 +204,6 @@ export function useReservation(eventID: string, userID: string | undefined, onSe
     const poll = window.setInterval(() => {
       if (!document.hidden && !saved.current.pending && saved.current.reservationID) void run(undefined, true);
     }, 2000);
-    const tick = window.setInterval(() => setNow(performance.now()), 1000);
     document.addEventListener('visibilitychange', resume);
     window.addEventListener('online', resume);
     window.addEventListener('focus', resume);
@@ -194,13 +214,18 @@ export function useReservation(eventID: string, userID: string | undefined, onSe
       working.current = false;
       mutating.current = false;
       window.clearInterval(poll);
-      window.clearInterval(tick);
       document.removeEventListener('visibilitychange', resume);
       window.removeEventListener('online', resume);
       window.removeEventListener('focus', resume);
     };
     // EventView is keyed by account and event; this effect owns that lifetime.
   }, [storageKey, userID]);
+
+  useEffect(() => {
+    if (reservation?.status !== 'HELD' || !clock) return;
+    const tick = window.setInterval(() => setNow(performance.now()), 1000);
+    return () => window.clearInterval(tick);
+  }, [reservation?.status, clock]);
 
   useEffect(() => {
     if (reservation?.status === 'HELD' && clock && seconds === 0 && !pending) void run();
@@ -233,6 +258,7 @@ export function useReservation(eventID: string, userID: string | undefined, onSe
     retry: () => { void run(saved.current.pending); },
     clear: () => {
       if (!saved.current.pending && reservation && reservation.status !== 'HELD' && interruptRead() && persist({})) {
+        receiptID.current = undefined;
         setReservation(undefined); setBooking(undefined); setClock(undefined); setError('');
       }
     },

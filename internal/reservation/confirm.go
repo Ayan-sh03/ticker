@@ -73,19 +73,30 @@ func (s *Store) Confirm(ctx context.Context, userID, key, id string) (Result, er
                 WHERE r.id = $1 RETURNING id::text`, id).Scan(&bookingID); err != nil {
 				return Result{}, err
 			}
-			if _, err := tx.Exec(ctx, `INSERT INTO booking_seats (booking_id, reservation_id, tenant_id, event_id, seat_id)
+			// Eligibility and lock acquisition are complete. Send these writes in
+			// one round trip; PostgreSQL still executes them in this order, in
+			// this transaction. Drain every result before reading the receipt.
+			var writes pgx.Batch
+			writes.Queue(`INSERT INTO booking_seats (booking_id, reservation_id, tenant_id, event_id, seat_id)
                 SELECT $2, reservation_id, tenant_id, event_id, seat_id FROM reservation_seats
-                WHERE reservation_id = $1 AND released_at IS NULL`, id, bookingID); err != nil {
-				return Result{}, err
+                WHERE reservation_id = $1 AND released_at IS NULL`, id, bookingID)
+			writes.Queue(`UPDATE seats SET status = 'SOLD' WHERE id IN
+                (SELECT seat_id FROM booking_seats WHERE booking_id = $1)`, bookingID)
+			writes.Queue(`UPDATE reservations SET status = 'CONFIRMED' WHERE id = $1`, id)
+			writes.Queue(insertAudit, id, userID, "HELD", "CONFIRMED", "customer_request", key)
+			results := tx.SendBatch(ctx, &writes)
+			for i := 0; i < writes.Len(); i++ {
+				tag, err := results.Exec()
+				if err != nil {
+					_ = results.Close()
+					return Result{}, err
+				}
+				if i == writes.Len()-1 && tag.RowsAffected() != 1 {
+					_ = results.Close()
+					return Result{}, errors.New("audit target reservation not found")
+				}
 			}
-			if _, err := tx.Exec(ctx, `UPDATE seats SET status = 'SOLD' WHERE id IN
-                (SELECT seat_id FROM booking_seats WHERE booking_id = $1)`, bookingID); err != nil {
-				return Result{}, err
-			}
-			if _, err := tx.Exec(ctx, `UPDATE reservations SET status = 'CONFIRMED' WHERE id = $1`, id); err != nil {
-				return Result{}, err
-			}
-			if err := audit(ctx, tx, id, userID, "HELD", "CONFIRMED", "customer_request", key); err != nil {
+			if err := results.Close(); err != nil {
 				return Result{}, err
 			}
 			receipt, err := booking.Read(ctx, tx, userID, bookingID)
