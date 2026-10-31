@@ -13,6 +13,8 @@ coverage/
 /PLAN.md
 /plan.md
 /.hallmark/
+/PRODUCT.md
+/.impeccable/
 
 .vercel
 .env*.local
