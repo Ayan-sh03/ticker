@@ -90,8 +90,27 @@ export function useReservation(eventID: string, userID: string | undefined, onSe
     setReservation(previous => previous ? { ...previous, status: receipt.status ?? 'CONFIRMED', booking_id: receipt.id } : previous);
   }
 
+  // Adopts the account's open hold for this event when this tab has none.
+  async function discover(signal: AbortSignal) {
+    const started = performance.now();
+    let value: Reservation;
+    try {
+      ({ reservation: value } = await request<{ reservation: Reservation }>(`/reservations/current?event_id=${eventID}`, { signal, headers: { 'X-Ticker-User': userID! } }));
+    } catch (failure) {
+      if (failure instanceof ApiError && failure.status === 404) return;
+      throw failure;
+    }
+    if (!alive.current || signal.aborted || saved.current.reservationID || saved.current.pending) return;
+    if (value.event_id.toLowerCase() !== eventID || value.status !== 'HELD') return;
+    if (!persist({ reservationID: value.id })) throw new StorageError();
+    accept(value, performance.now() - started);
+  }
+
   async function read(signal: AbortSignal, pollReceipt = false) {
-    if (!saved.current.reservationID) return;
+    if (!saved.current.reservationID) {
+      if (!pollReceipt && !saved.current.pending) await discover(signal);
+      return;
+    }
     // A receipt contains the live cancellation status. Its protected endpoint
     // checks the cookie owner and X-Ticker-User just like the reservation read.
     if (pollReceipt && receiptID.current) {
