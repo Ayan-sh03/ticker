@@ -28,6 +28,8 @@ type Event struct {
 	StartsAt      time.Time `json:"starts_at"`
 	LayoutRows    int       `json:"layout_rows"`
 	LayoutColumns int       `json:"layout_columns"`
+	// SeatsAvailable is set only in the event list.
+	SeatsAvailable *int64 `json:"seats_available,omitempty"`
 }
 
 type Seat struct {
@@ -56,10 +58,12 @@ func (s *Store) ListEvents(ctx context.Context, limit, offset int) ([]Event, err
 	defer rows.Close()
 	events := make([]Event, 0)
 	for rows.Next() {
-		event, err := scanEvent(rows)
+		var available int64
+		event, err := scanEvent(rows, &available)
 		if err != nil {
 			return nil, err
 		}
+		event.SeatsAvailable = &available
 		events = append(events, event)
 	}
 	return events, rows.Err()
@@ -140,10 +144,10 @@ func (s *Store) listSeats(ctx context.Context, eventID string) ([]Seat, error) {
 	return seats, rows.Err()
 }
 
-func scanEvent(row pgx.Row) (Event, error) {
+func scanEvent(row pgx.Row, extra ...any) (Event, error) {
 	var event Event
-	err := row.Scan(&event.ID, &event.TenantID, &event.Title, &event.Description, &event.VenueName,
-		&event.PriceMinor, &event.Currency, &event.SalesOpenAt, &event.StartsAt, &event.LayoutRows, &event.LayoutColumns)
+	err := row.Scan(append([]any{&event.ID, &event.TenantID, &event.Title, &event.Description, &event.VenueName,
+		&event.PriceMinor, &event.Currency, &event.SalesOpenAt, &event.StartsAt, &event.LayoutRows, &event.LayoutColumns}, extra...)...)
 	event.SalesOpenAt = event.SalesOpenAt.UTC()
 	event.StartsAt = event.StartsAt.UTC()
 	return event, err
