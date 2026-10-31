@@ -178,7 +178,13 @@
   color: var(--color-ink);
 }
 
+.organizer-zone {
+  margin-block-end: var(--space-2xl);
+}
+
 .organizer-description {
+  display: grid;
+  gap: var(--space-sm);
   max-width: 65ch;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -359,6 +365,10 @@
 .organizer-sales-name { color: var(--color-ink); font-size: var(--text-body); font-weight: 500; }
 .organizer-sales > li[data-status='CANCELLED'] .price { color: var(--color-muted); text-decoration: line-through; }
 .organizer-sales-amount { display: grid; gap: var(--space-xs); justify-items: start; }
+.organizer-sales-confirm { display: grid; gap: var(--space-sm); justify-items: inherit; }
+.organizer-event-tools { margin-bottom: var(--space-2xl); }
+.organizer-workspace { display: grid; gap: var(--space-xs); color: var(--color-ink); font-weight: 500; }
+.organizer-workspace span { color: var(--color-muted); font-size: var(--text-sm); font-weight: 400; }
 
 @media (min-width: 40rem) {
   .organizer-details.organizer-sales-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }

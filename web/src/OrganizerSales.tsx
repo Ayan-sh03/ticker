@@ -72,7 +72,7 @@ export function OrganizerSales({ tenantID, eventID, userID, heading, onSessionEx
     {error && <ErrorMessage message={error} retry={denied ? undefined : () => { event.retry(); list.retry(); }} />}
     {!denied && <>
       {summary && <dl className="organizer-details organizer-sales-summary">
-        <div><dt>Bookings</dt><dd>{summary.bookings}</dd></div>
+        <div><dt>Active bookings</dt><dd>{summary.bookings}</dd></div>
         <div><dt>Seats sold</dt><dd>{summary.seats_sold}</dd></div>
         <div><dt>Cancelled bookings</dt><dd>{summary.cancelled_bookings}</dd></div>
         <div><dt>Open holds</dt><dd>{summary.open_holds}</dd></div>
@@ -95,9 +95,9 @@ export function OrganizerSales({ tenantID, eventID, userID, heading, onSessionEx
           <div className="organizer-sales-amount"><p className="price">{price({ price_minor: row.total_minor, currency: row.currency })}</p>
             {/* The API decides whether the event has started, by its own clock. */}
             {row.status === 'CANCELLED' ? <p>{row.cancelled_by_customer ? 'Cancelled by customer' : 'Cancelled by organizer'}</p> : (confirming === row.id
-              ? <p className="organizer-sales-confirm">Seats go back on sale.{' '}
-                <button className="text-button" disabled={!!cancelling} onClick={() => void cancelBooking(row)}>{cancelling === row.id ? 'Cancelling…' : 'Cancel booking'}</button>{' '}
-                <button className="text-button" disabled={!!cancelling} onClick={() => setConfirming('')}>Keep</button></p>
+              ? <div className="organizer-sales-confirm"><p>Cancel {row.customer.display_name}'s booking for {row.seat_labels.join(', ')}? The seats go back on sale, and this cannot be undone.</p>
+                <div className="form-actions"><button className="button" autoFocus disabled={!!cancelling} onClick={() => setConfirming('')}>Keep booking</button>
+                  <button className="button button-danger" disabled={!!cancelling} onClick={() => void cancelBooking(row)}>{cancelling === row.id ? 'Cancelling…' : 'Cancel booking'}</button></div></div>
               : <button className="text-button" disabled={!!cancelling} onClick={() => { setConfirming(row.id); setMessage(''); setFailure(''); }}>Cancel…</button>)}
           </div>
         </li>)

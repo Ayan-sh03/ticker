@@ -84,7 +84,7 @@ export function App() {
           onLogin={() => { setAuth({ mode: 'login', reserve: true }); dialog.current?.showModal(); }} onSessionExpired={sessionExpired} />
         : <EventIndex heading={heading} />}
     </main>
-    <footer className="footer"><span>Ticker</span><span>Choose your seat.</span></footer>
+    <footer className="footer"><span>Ticker</span><span>{organizerRoute ? 'Run your events.' : 'Choose your seat.'}</span></footer>
     <dialog ref={dialog} className="login-dialog" onClick={event => {
       if (event.target === dialog.current) {
         const box = dialog.current!.getBoundingClientRect();
