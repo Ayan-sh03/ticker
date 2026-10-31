@@ -45,8 +45,6 @@ The main goal is simple: **a seat is never sold twice**, even when many people c
 - **Docker frontend delivery** serves precompressed JavaScript/CSS and caches content-hashed assets. HTML revalidates so a new deployment is discovered.
 - An append-only **audit trail** records each hold, confirmation, expiry, and cancellation. A read-only **audit command** checks the database for broken rules.
 
-For the full design, read [docs/report.md](docs/report.md).
-
 ## How a seat is won
 
 Two customers click Reserve at the same time. Buyer A wants seat R1-S7. Buyer B wants R1-S6 and R1-S7.
