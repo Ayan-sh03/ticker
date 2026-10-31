@@ -154,6 +154,20 @@ export function when(iso: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso));
 }
 
+// A readable zone name such as "India Standard Time". Browsers disagree on
+// IANA aliases (Asia/Calcutta and Asia/Kolkata are one zone), so names are
+// shown instead of IDs. With no zone, it names the browser's own.
+export function zoneName(zone?: string) {
+  for (const style of ['longGeneric', 'long'] as const) {
+    try {
+      const part = new Intl.DateTimeFormat(undefined, { timeZone: zone, timeZoneName: style }).formatToParts(new Date())
+        .find(item => item.type === 'timeZoneName');
+      if (part) return part.value;
+    } catch { /* Try the next style, then fall back to the ID. */ }
+  }
+  return zone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
 export function date(event: Event) {
   return when(event.starts_at);
 }

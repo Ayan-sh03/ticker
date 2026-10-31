@@ -2,6 +2,7 @@
 import { useEffect, type RefObject } from 'react';
 import { ErrorMessage } from './Feedback';
 import { usePrivateResource } from './usePrivateResource';
+import { zoneName } from './api';
 
 // Money arrives as exact decimal strings of minor units; sums can exceed what a JavaScript number holds.
 type Revenue = { bookings: number; seats_sold: number; gross_minor: string; fee_minor: string; net_minor: string };
@@ -96,7 +97,7 @@ export function TenantInsights({ tenantID, userID, heading, onSessionExpired, te
   const day = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone: zone });
   return <>
     <div className="page-heading"><h1 ref={heading} tabIndex={-1}>Insights</h1>
-      <p>{data ? `${tenantName} · Platform fee ${data.fee_bps / 100}% · Dates in ${zone}` : `${tenantName} · Revenue across published events.`}</p></div>
+      <p>{data ? `${tenantName} · Platform fee ${data.fee_bps / 100}% · Dates in ${zoneName(zone)}` : `${tenantName} · Revenue across published events.`}</p></div>
     {error && <ErrorMessage message={error} retry={forbidden ? undefined : retry} />}
     {!data && !error && <p className="loading" role="status">Loading insights…</p>}
     {data && (data.totals.length === 0 ? <p className="organizer-empty">No bookings yet. Revenue appears after the first confirmed booking.</p>
@@ -123,7 +124,7 @@ export function EventInsights({ tenantID, eventID, userID, heading, onSessionExp
   const zone = data ? usableZone(data.time_zone) : 'UTC';
   return <>
     <div className="page-heading"><h1 ref={heading} tabIndex={-1}>Insights</h1>
-      <p>{event ? `${event.title} · Times in ${zone}` : 'Sales, holds, and timing for this event.'}</p></div>
+      <p>{event ? `${event.title} · Times in ${zoneName(zone)}` : 'Sales, holds, and timing for this event.'}</p></div>
     {error && <ErrorMessage message={error} retry={forbidden ? undefined : retry} />}
     {!data && !error && <p className="loading" role="status">Loading insights…</p>}
     {data && event && (data.funnel.holds === 0 && data.funnel.interested === 0

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import { ApiError, date, price, request, type OrganizerEvent, type Session, type Tenant } from './api';
+import { ApiError, date, price, request, zoneName, type OrganizerEvent, type Session, type Tenant } from './api';
 import { usePrivateResource } from './usePrivateResource';
 import { OrganizerSeats } from './OrganizerSeats';
 import { OrganizerSales } from './OrganizerSales';
@@ -175,7 +175,7 @@ function EventDetail({ tenantID, eventID, userID, heading, onSessionExpired }: {
     } finally { busy.current = false; if (mounted.current) setPending(false); }
   }
   const event = resource.data?.event;
-  const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const localZone = zoneName();
   const formatTime = (value: string) => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
   return <>
     <div className="page-heading"><h1 ref={heading} tabIndex={-1}>{editing ? 'Edit event' : event?.title ?? 'Event review'}</h1><p>{event ? editing ? `Update ${event.title}.` : event.status === 'DRAFT' ? 'Private draft · Review the details before publishing.' : 'Published · Your event is visible to customers.' : 'Review your event details.'}</p></div>
