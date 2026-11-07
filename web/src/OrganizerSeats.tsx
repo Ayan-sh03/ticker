@@ -1,9 +1,9 @@
 /* Hallmark · component: organizer seat availability · genre: modern-minimal · theme: existing Coral tokens */
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { ApiError, request, type OrganizerEvent, type Seat } from './api';
 import { ErrorMessage } from './Feedback';
 import { usePrivateResource } from './usePrivateResource';
-import { groupSeats } from './seatGroups';
+import { SeatLegend, SeatMap, seatTones, type RowAction, type SeatLook } from './SeatMap';
 
 const emptySeats: Seat[] = [];
 
@@ -38,7 +38,6 @@ export function OrganizerSeats({ tenantID, eventID, userID, heading, onSessionEx
   const full = chosen.length >= selectLimit;
   const counts = { AVAILABLE: 0, HELD: 0, SOLD: 0, BLOCKED: 0 };
   for (const seat of seats) counts[seat.status]++;
-  const groups = useMemo(() => groupSeats(seats), [seats]);
 
   function failed(failure: unknown) {
     if (failure instanceof ApiError && failure.status === 401) { inventory.deny(); onSessionExpired(); return true; }
@@ -64,6 +63,29 @@ export function OrganizerSeats({ tenantID, eventID, userID, heading, onSessionEx
     const allChosen = ids.every(id => selected.includes(id));
     if (allChosen) setSelected(selected.filter(id => !ids.includes(id)));
     else setSelected([...selected, ...ids.filter(id => !selected.includes(id))].slice(0, selectLimit));
+  }
+
+  // Shift-click and drag select or clear a block; the 200-seat cap still applies.
+  function setRange(ids: string[], on: boolean) {
+    setMessage(''); setError('');
+    setSelected(on ? [...selected, ...ids.filter(id => !selected.includes(id))].slice(0, selectLimit) : selected.filter(id => !ids.includes(id)));
+  }
+
+  function look(seat: Seat): SeatLook {
+    const isChosen = selected.includes(seat.id) && changeable(seat);
+    const capped = changeable(seat) && !isChosen && full;
+    return {
+      tone: isChosen ? 'selected' : seatTones[seat.status],
+      enabled: !pending && changeable(seat) && !capped,
+      label: `${seat.label}, ${statuses[seat.status]}${isChosen ? ', selected' : ''}${capped ? `, ${selectLimit}-seat limit reached` : ''}`,
+    };
+  }
+
+  function rowAction(rowSeats: Seat[]): RowAction | null {
+    const ids = rowSeats.filter(changeable).map(seat => seat.id);
+    if (!ids.length) return null;
+    const all = ids.every(id => selected.includes(id));
+    return { label: `${all ? 'Clear' : 'Select'} row ${rowSeats[0].row_number}`, disabled: pending || (!all && full), run: () => toggle(ids) };
   }
 
   async function change(status: 'BLOCKED' | 'AVAILABLE') {
@@ -93,6 +115,7 @@ export function OrganizerSeats({ tenantID, eventID, userID, heading, onSessionEx
   }
 
   const current = event.data?.event;
+  const coarse = window.matchMedia('(pointer: coarse)').matches;
   return <>
     <div className="page-heading"><h1 ref={heading} tabIndex={-1}>Seats</h1><p>{current ? `${current.title} · Block seats to keep them off sale.` : 'Manage seat availability.'}</p></div>
     {(event.error || inventory.error) && <ErrorMessage message={event.error ?? inventory.error!} retry={() => { event.retry(); inventory.retry(); }} />}
@@ -102,7 +125,7 @@ export function OrganizerSeats({ tenantID, eventID, userID, heading, onSessionEx
         `${counts.AVAILABLE} available`, `${counts.HELD} held`, `${counts.SOLD} booked`, `${counts.BLOCKED} blocked`,
       ].join(' · ')}</p>
       <div className="organizer-seat-actions" role="region" aria-label="Selected seats">
-        <p>{chosen.length ? `${seatCount(chosen.length)} selected${full ? `, the most one change allows` : ''}.` : 'Select available seats to block, or blocked seats to unblock.'}</p>
+        <p aria-live="polite">{chosen.length ? `${seatCount(chosen.length)} selected${full ? `, the most one change allows` : ''}.` : 'Select available seats to block, or blocked seats to unblock.'}</p>
         <div className="form-actions">
           <button className="button button-solid" disabled={pending || !toBlock.length} onClick={() => void change('BLOCKED')}>{pending && !refreshing ? 'Saving…' : `Block ${toBlock.length ? seatCount(toBlock.length) : 'seats'}`}</button>
           <button className="button" disabled={pending || !toUnblock.length} onClick={() => void change('AVAILABLE')}>Unblock {toUnblock.length ? seatCount(toUnblock.length) : 'seats'}</button>
@@ -112,23 +135,10 @@ export function OrganizerSeats({ tenantID, eventID, userID, heading, onSessionEx
         {message && <p role="status">{message}</p>}
         {error && <p className="error" role="alert">{error}</p>}
       </div>
-      <ul className="legend" aria-label="Seat status"><li><span className="legend-mark" aria-hidden="true" />Available</li><li><span className="legend-mark selected-mark" aria-hidden="true">✓</span>Selected</li><li><span className="legend-mark held-mark" aria-hidden="true">–</span>Held</li><li><span className="legend-mark booked-mark" aria-hidden="true">✓</span>Booked</li><li><span className="legend-mark blocked-mark" aria-hidden="true">×</span>Blocked</li></ul>
-      {[...groups].map(([group, rowSeats]) => {
-        const rowIDs = rowSeats.filter(changeable).map(seat => seat.id);
-        const rowChosen = rowIDs.length > 0 && rowIDs.every(id => selected.includes(id));
-        return <div className="seat-group" key={group}>
-          <div className="organizer-seat-row"><h3>{group}</h3>
-            {rowIDs.length > 0 && <button className="text-button" disabled={pending || (!rowChosen && full)} onClick={() => toggle(rowIDs)}>{rowChosen ? 'Clear row' : 'Select row'}</button>}</div>
-          <ul className="seat-grid">{rowSeats.map(seat => {
-            const isChosen = selected.includes(seat.id) && changeable(seat);
-            return <li key={seat.id}><button className="seat" data-seat-status={seat.status} aria-pressed={isChosen}
-              disabled={pending || !changeable(seat) || (!isChosen && full)}
-              aria-label={`${seat.label}, ${statuses[seat.status]}${isChosen ? ', selected' : ''}`} onClick={() => toggle([seat.id])}>
-              <span>{seat.label}</span><span className="seat-state" aria-hidden="true">{isChosen ? '✓' : seat.status === 'AVAILABLE' ? '' : statuses[seat.status]}</span>
-            </button></li>;
-          })}</ul>
-        </div>;
-      })}
+      <SeatLegend label="Seat status" />
+      <SeatMap seats={seats} look={look} onToggle={id => toggle([id])} onRange={setRange} rowAction={rowAction} sectionHeading="h2" hintVisible
+        hint={coarse ? 'Tap seats to select them, or tap a row number to select the whole row.'
+          : 'Drag or shift-click to select a block of seats. Select a row by its number. Arrow keys move between seats.'} />
     </div>)}
   </>;
 }

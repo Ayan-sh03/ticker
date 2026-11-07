@@ -178,7 +178,13 @@
   color: var(--color-ink);
 }
 
+.organizer-zone {
+  margin-block-end: var(--space-2xl);
+}
+
 .organizer-description {
+  display: grid;
+  gap: var(--space-sm);
   max-width: 65ch;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -238,12 +244,12 @@
   min-height: 48px;
 }
 
-.organizer .button-danger {
+.button-danger {
   border-color: var(--color-error);
   color: var(--color-error);
 }
 
-.organizer .button-danger:active:not(:disabled) {
+.button-danger:active:not(:disabled) {
   background: var(--color-error);
   color: var(--color-paper);
 }
@@ -347,22 +353,20 @@
   background: var(--color-paper);
 }
 .organizer-seat-actions p { font-size: var(--text-sm); }
-.organizer-seat-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-lg); margin-bottom: var(--space-md); }
-.organizer-seat-row h3 { margin: 0; }
-.organizer-seats .seat[data-seat-status='BLOCKED']:not([aria-pressed='true']):not(:disabled) { background: var(--color-paper-2); color: var(--color-muted); border-style: dotted; }
-.organizer-seats .seat-grid .seat .seat-state:not(:empty) { display: block; margin: 0; font-size: 0.75rem; line-height: 1.2; }
 
 /* Hallmark · component: organizer bookings and holds · genre: modern-minimal · theme: Coral · motion: none */
 .organizer-sales-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .organizer-sales-summary dd { font-size: 1.5rem; font-weight: 550; }
-.organizer-tabs { display: flex; flex-wrap: wrap; gap: var(--space-sm); margin-block: var(--space-xl); }
-.organizer-tabs .button[aria-pressed='true'] { background: var(--color-ink); color: var(--color-paper); border-color: var(--color-ink); }
+.organizer-search { display: grid; gap: var(--space-xs); max-width: 32rem; margin-bottom: var(--space-xl); }
+.organizer-search > div { display: flex; gap: var(--space-sm); }
+.organizer-search input { flex: 1; min-width: 0; }
 .organizer-sales { border-top: 1px solid var(--color-rule); }
 .organizer-sales > li { display: grid; gap: var(--space-sm); padding-block: var(--space-lg); border-bottom: 1px solid var(--color-rule); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
 .organizer-sales > li > * { min-width: 0; overflow-wrap: anywhere; }
 .organizer-sales-name { color: var(--color-ink); font-size: var(--text-body); font-weight: 500; }
 .organizer-sales > li[data-status='CANCELLED'] .price { color: var(--color-muted); text-decoration: line-through; }
 .organizer-sales-amount { display: grid; gap: var(--space-xs); justify-items: start; }
+.organizer-sales-confirm { display: grid; gap: var(--space-sm); justify-items: inherit; }
 
 @media (min-width: 40rem) {
   .organizer-details.organizer-sales-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -371,10 +375,6 @@
 }
 
 @media (min-width: 40rem) {
-  .organizer .event-list { display: grid; grid-template-columns: minmax(0, 1fr) minmax(7rem, max-content) max-content; column-gap: var(--space-2xl); }
-  .organizer .event-list > li,
-  .organizer .event-entry { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; }
-  .organizer .event-action { display: contents; }
   .organizer .price { text-align: start; }
   .masthead:has(.app-nav) {
     flex-wrap: nowrap;
@@ -410,7 +410,7 @@
 }
 
 @media (hover: hover) {
-  .organizer .button-danger:hover:not(:disabled) {
+  .button-danger:hover:not(:disabled) {
     background: var(--color-error);
     color: var(--color-paper);
   }
@@ -429,7 +429,7 @@
   }
 }
 
-/* Insights: tiles, labelled bars, and column charts drawn in the accent. */
+/* Insights: tiles, labelled bars, and column charts drawn in ink; coral stays for "yours". */
 .insight-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .insight-tiles dd { font-size: 1.25rem; font-weight: 550; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .insight-section { margin-top: var(--space-2xl); }
@@ -438,10 +438,12 @@
 .insight-bars > li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-xs) var(--space-md); }
 .insight-value { color: var(--color-muted); font-variant-numeric: tabular-nums; text-align: end; }
 .insight-track { grid-column: 1 / -1; height: 0.5rem; border-radius: var(--radius-pill); background: var(--color-paper-2); overflow: hidden; }
-.insight-track > span { display: block; height: 100%; border-radius: inherit; background: var(--color-accent); }
+.insight-track > span { display: block; height: 100%; border-radius: inherit; background: var(--color-ink); }
+.insight-bars > li[data-muted] .insight-track > span { background: var(--color-control); }
 .insight-columns { margin: 0; }
 .insight-columns svg { display: block; width: 100%; height: 8rem; border-bottom: 1px solid var(--color-rule); }
-.insight-columns rect { fill: var(--color-accent); }
+.insight-columns rect { fill: var(--color-ink); }
+.insight-peak { margin-bottom: var(--space-sm); color: var(--color-muted); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
 .insight-columns figcaption { display: flex; justify-content: space-between; gap: var(--space-md); margin-top: var(--space-xs); color: var(--color-muted); font-size: var(--text-sm); }
 .insight-events { border-top: 1px solid var(--color-rule); }
 .insight-data { margin-top: var(--space-md); font-size: var(--text-sm); }
@@ -450,6 +452,7 @@
 .insight-data th, .insight-data td { padding-block: var(--space-xs); border-bottom: 1px solid var(--color-rule); text-align: start; font-weight: 400; }
 .insight-data td { text-align: end; }
 .insight-note { margin-bottom: var(--space-md); color: var(--color-muted); font-size: var(--text-sm); }
+.insight-bars + .insight-note { margin-top: var(--space-md); }
 .insight-events > li { display: grid; gap: var(--space-md); padding-block: var(--space-lg); border-bottom: 1px solid var(--color-rule); }
 .insight-events > li > * { min-width: 0; overflow-wrap: anywhere; }
 .insight-events a { color: var(--color-ink); font-weight: 500; }
@@ -460,3 +463,27 @@
   .insight-events > li { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 9rem; align-items: center; gap: var(--space-xl); }
   .insight-events > li > :last-child { text-align: end; }
 }
+
+/* Organizer event list: dense rows with sales and direct links to each event's pages. */
+.organizer-list-actions { margin-bottom: var(--space-xl); }
+.organizer-events { border-top: 1px solid var(--color-rule); }
+.organizer-events > li { display: grid; gap: var(--space-sm) var(--space-xl); padding-block: var(--space-lg); border-bottom: 1px solid var(--color-rule); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.organizer-events > li > * { min-width: 0; overflow-wrap: anywhere; }
+.organizer-events h2 { font-size: 1.125rem; }
+.organizer-events h2 a { text-decoration: none; }
+.organizer-events p { font-size: var(--text-sm); }
+.organizer-event-sold { display: grid; gap: var(--space-xs); color: var(--color-muted); }
+.organizer-event-links { display: flex; flex-wrap: wrap; gap: 0 var(--space-lg); }
+.organizer-event-links a { display: inline-flex; align-items: center; min-height: 44px; color: var(--color-ink); text-underline-offset: 3px; }
+.event-tabs { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-md) var(--space-xl); margin-block: var(--space-md) var(--space-lg); }
+.event-tabs .text-button { display: inline-flex; align-items: center; font-size: var(--text-sm); }
+.organizer-filters { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-md) var(--space-xl); margin-block: var(--space-xl); }
+.organizer-filters .text-button { font-size: var(--text-sm); }
+.segmented-count { color: var(--color-muted); font-variant-numeric: tabular-nums; }
+@media (min-width: 48rem) {
+  .organizer-events > li { grid-template-columns: minmax(0, 1fr) 9rem 6rem 12rem; align-items: center; }
+  .organizer-events > li[data-draft] .organizer-event-sold { grid-column: span 2; }
+  .organizer-events .price { text-align: end; }
+  .organizer-event-links { justify-content: end; }
+}
+@media (hover: hover) { .organizer-events h2 a:hover { text-decoration: underline; } }

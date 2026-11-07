@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { ApiError, date, price, request, useResource, type Event, type Session } from './api';
+import { ApiError, date, price, request, sale, useResource, when, type Event, type Session } from './api';
 import { EventView } from './EventView';
 import { ErrorMessage } from './Feedback';
 import { Organizer } from './Organizer';
@@ -14,7 +14,8 @@ export function App() {
   const [accountError, setAccountError] = useState('');
   const [loggingOut, setLoggingOut] = useState(false);
   // The dialog shows login or signup; email carries an address over to login.
-  const [auth, setAuth] = useState<{ mode: 'login' | 'signup'; email?: string }>({ mode: 'login' });
+  // reserve marks a login opened from the seat panel, so it can mention the waiting seats.
+  const [auth, setAuth] = useState<{ mode: 'login' | 'signup'; email?: string; reserve?: boolean }>({ mode: 'login' });
   const dialog = useRef<HTMLDialogElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const organizerRoute = eventID === 'organizer' || eventID.startsWith('organizer/');
@@ -80,10 +81,10 @@ export function App() {
         : eventID && eventID !== 'content'
         ? <EventView key={`${eventID}:${loggingOut ? 'leaving' : session?.user.id ?? 'guest'}`} id={eventID} heading={heading}
           session={loggingOut ? null : session} checking={checking || loggingOut} selectedIDs={selectedIDs} select={select}
-          onLogin={() => dialog.current?.showModal()} onSessionExpired={sessionExpired} />
+          onLogin={() => { setAuth({ mode: 'login', reserve: true }); dialog.current?.showModal(); }} onSessionExpired={sessionExpired} />
         : <EventIndex heading={heading} />}
     </main>
-    <footer className="footer"><span>Ticker</span><span>Choose your seat.</span></footer>
+    <footer className="footer"><span>Ticker</span><span>{organizerRoute ? 'Run your events.' : 'Choose your seat.'}</span></footer>
     <dialog ref={dialog} className="login-dialog" onClick={event => {
       if (event.target === dialog.current) {
         const box = dialog.current!.getBoundingClientRect();
@@ -92,7 +93,7 @@ export function App() {
     }} onClose={() => setAuth({ mode: 'login' })} aria-labelledby="login-title">
       {auth.mode === 'signup'
         ? <Signup onSuccess={signedIn} onClose={() => dialog.current?.close()} onLogin={email => setAuth({ mode: 'login', email })} />
-        : <Login key={auth.email ?? ''} email={auth.email} onSuccess={signedIn} onClose={() => dialog.current?.close()} onSignup={() => setAuth({ mode: 'signup' })} />}
+        : <Login key={auth.email ?? ''} email={auth.email} seats={auth.reserve ? selectedIDs.length : 0} onSuccess={signedIn} onClose={() => dialog.current?.close()} onSignup={() => setAuth({ mode: 'signup' })} />}
     </dialog>
   </div>;
 }
@@ -107,11 +108,18 @@ function EventIndex({ heading }: { heading: React.RefObject<HTMLHeadingElement |
     {!data && !error && <p className="loading" role="status">Loading events…</p>}
     {data && <>
       {data.events.length === 0 && <p>No events are listed here yet.</p>}
-      <ul className="event-list">{data.events.map(event => <li key={event.id}>
-        <div className="event-entry"><div><p className="eyebrow">{date(event)}</p><h2>{event.title}</h2><p>{event.venue_name}</p></div>
-          <div className="event-action"><span className="price">{price(event)}<small>per seat</small></span><a className="button button-solid" href={`#${event.id}`} aria-label={`View seats for ${event.title}`}>View seats <span aria-hidden="true">↗</span></a></div>
-        </div>
-      </li>)}</ul>
+      <ul className="event-list">{data.events.map(event => {
+        const state = sale(event);
+        const seatsUnavailable = event.seats_available === 0;
+        return <li key={event.id}>
+          <div className="event-entry"><div><h2>{event.title}</h2><p>{date(event)} · {event.venue_name}</p></div>
+            <div className="event-action"><span className="price">{price(event)}<small>per seat</small>
+              {state !== 'open' ? <small className="sale-state">{state === 'started' ? 'Event started' : `On sale ${when(event.sales_open_at)}`}</small>
+                : event.seats_available !== undefined && <small className="sale-state">{seatsUnavailable ? 'No seats available' : `${event.seats_available} ${event.seats_available === 1 ? 'seat' : 'seats'} left`}</small>}</span>
+              <a className={`button ${state === 'open' && !seatsUnavailable ? 'button-solid' : ''}`} href={`#${event.id}`} aria-label={`${state === 'started' ? 'View' : 'View seats for'} ${event.title}`}>{state === 'started' ? 'View event' : 'View seats'}</a></div>
+          </div>
+        </li>;
+      })}</ul>
     </>}
     {(offset > 0 || data?.events.length === 20) && <nav className="pagination" aria-label="Event pages">
       <button className="button" disabled={offset === 0} onClick={() => setOffset(value => value - 20)}>Previous</button>
@@ -120,8 +128,8 @@ function EventIndex({ heading }: { heading: React.RefObject<HTMLHeadingElement |
   </>;
 }
 
-function Login({ email, onSuccess, onClose, onSignup }: {
-  email?: string; onSuccess: (session: Session) => void; onClose: () => void; onSignup: () => void;
+function Login({ email, seats, onSuccess, onClose, onSignup }: {
+  email?: string; seats: number; onSuccess: (session: Session) => void; onClose: () => void; onSignup: () => void;
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
@@ -150,7 +158,8 @@ function Login({ email, onSuccess, onClose, onSignup }: {
     } finally { setPending(false); }
   }
   return <form ref={formRef} onSubmit={submit} onInput={() => { if (error) setError(''); }} className="login-form">
-    <h2 id="login-title">Welcome back.</h2><p>Log in to your account.</p>
+    <h2 id="login-title">{seats ? 'Log in to reserve.' : 'Welcome back.'}</h2>
+    <p>{seats ? `Your ${seats === 1 ? 'selected seat stays' : `${seats} selected seats stay`} selected while you log in.` : 'Log in to your account.'}</p>
     <label htmlFor="email">Email address</label><input id="email" name="email" type="email" maxLength={254} autoComplete="username" defaultValue={email} autoFocus={!email} required aria-invalid={!!error} aria-describedby="login-error" />
     <label htmlFor="password">Password</label><input id="password" name="password" type="password" autoComplete="current-password" autoFocus={!!email} required aria-invalid={!!error} aria-describedby="login-error" />
     <p id="login-error" className="error form-message" role="alert">{error}</p>

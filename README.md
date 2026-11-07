@@ -17,19 +17,20 @@ The main goal is simple: **a seat is never sold twice**, even when many people c
 ## What it does
 
 **Customers**
-- See published events and live seat availability.
+- See published events, how many seats each has left, and live seat availability. Held and blocked seats do not count as available.
 - Sign up with a six-digit code from email, or log in.
 - Hold 1–6 seats for 5 minutes. If someone takes a seat first, the page names that seat and keeps the others selected.
-- Confirm the hold to get a booking and a receipt. Or cancel the hold.
+- Confirm the hold to get a booking and a receipt. Or cancel the hold. A hold made in one tab or device shows up in the others.
+- Find your active bookings for an event from any tab or device and open their receipts. Older bookings are paginated; all your booked seats stay marked on the map.
 - Cancel your confirmed booking from its receipt before the event starts. Its seats go back on sale.
 - Mark an event as "interested".
 
 **Organizers** (each in their own workspace)
 - Make private drafts, edit them, and publish them. Delete an event only if nobody ever reserved a seat in it.
 - Block or unblock up to 200 seats in one change. The change applies to all of the seats or to none.
-- Page through bookings and holds (open, expired, cancelled) with live counts.
+- Page through bookings and holds (open, expired, cancelled) with live counts. Search bookings by customer name, email, or seat.
 - Cancel a confirmed booking before the event starts. Its seats go back on sale.
-- Read insights: revenue after the platform fee (5% by default), how many seats sold, a funnel from interest to bookings, revenue by day, and the busiest hours.
+- Read insights: revenue after the platform fee (5% by default), how many seats sold, a funnel from interest to bookings, how every hold ended, revenue by day, and the busiest hours.
 
 ## How it is built
 
@@ -41,7 +42,7 @@ The main goal is simple: **a seat is never sold twice**, even when many people c
 - **Go** (`net/http` and `pgx`) runs the API and the worker. They are two processes from one Go module.
 - **PostgreSQL** keeps all of the state. Row locks, taken in one fixed order, decide who gets a seat. Constraints and partial unique indexes are a second line of defense.
 - **Redis** keeps only rate-limit counters and short-lived signup codes. If Redis stops, rate limits use memory, and signup returns 503 until Redis is back. Seats and bookings do not use Redis.
-- **React + TypeScript + Vite** make the UI. The seat map reuses unchanged rendering work during countdown updates. Reservation and receipt polling keep the same two-second interval and verify the expected account on each protected read.
+- **React + TypeScript + Vite** make the UI. The seat map reuses unchanged rendering work during countdown updates. Reservation and receipt polling keep the same two-second interval. Your event bookings refresh every five seconds while visible, on focus, when the tab becomes visible or reconnects, and when the displayed receipt changes. Each protected read verifies the expected account.
 - **Docker frontend delivery** serves precompressed JavaScript/CSS and caches content-hashed assets. HTML revalidates so a new deployment is discovered.
 - An append-only **audit trail** records each hold, confirmation, expiry, and cancellation. A read-only **audit command** checks the database for broken rules.
 
@@ -182,11 +183,13 @@ In the table, `{t}` is a workspace (tenant) ID, `{e}` is an event ID, and `{b}` 
 |---|---|
 | Catalog | `GET /events`, `GET /events/{id}`, `GET /events/{id}/seats` |
 | Accounts | `POST /sessions` (log in), `DELETE /sessions/current` (log out), `GET /me`, `POST /signups/code`, `POST /signups` |
-| Reservations | `POST /reservations` (with `Idempotency-Key`), `GET` and `DELETE /reservations/{id}`, `POST /reservations/{id}/confirm` |
-| Bookings | `GET /bookings/{id}`, `POST /bookings/{id}/cancel` |
+| Reservations | `POST /reservations` (with `Idempotency-Key`), `GET /reservations/current?event_id={e}` (your open hold for an event), `GET` and `DELETE /reservations/{id}`, `POST /reservations/{id}/confirm` |
+| Bookings | `GET /bookings?event_id={e}` (your active bookings, with optional `before` cursor), `GET /bookings/{id}`, `POST /bookings/{id}/cancel` |
 | Interest | `GET`, `PUT`, `DELETE /events/{id}/interest` |
 | Organizer | `GET /organizer/tenants`, `GET` and `POST /organizer/tenants/{t}/events`, `GET /organizer/tenants/{t}/insights` |
-| One event | `GET`, `PUT`, and `DELETE …`, `POST …/publish`, `GET` and `PATCH …/seats`, `GET …/bookings`, `GET …/holds`, `POST …/bookings/{b}/cancel`, `GET …/insights` |
+| One event | `GET`, `PUT`, and `DELETE …`, `POST …/publish`, `GET` and `PATCH …/seats`, `GET …/bookings` (`?q=` searches), `GET …/holds`, `POST …/bookings/{b}/cancel`, `GET …/insights` |
+
+The customer booking list returns up to 20 active bookings, newest first. Pass its `next_before` booking UUID as `before` to fetch older bookings; a missing `next_before` means the last page. `total_bookings` counts all your active bookings for the event, and `booked_seat_ids` includes their seats across every page. These values come from one database snapshot. A cancelled booking can still identify a cursor, so cancellations do not break paging.
 
 ## Deploy
 

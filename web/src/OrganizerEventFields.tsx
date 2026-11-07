@@ -1,4 +1,4 @@
-import type { DraftEventInput, OrganizerEvent } from './api';
+import { zoneName, type DraftEventInput, type OrganizerEvent } from './api';
 import { OrganizerDateTime } from './OrganizerDateTime';
 import { OrganizerSelect } from './OrganizerSelect';
 
@@ -63,7 +63,7 @@ export function OrganizerEventFields({ fields, update, disabled, priceLayoutEdit
   priceLayoutEditable?: boolean; originalCurrency?: string; mode?: 'create' | 'edit';
 }) {
   const id = mode === 'create' ? 'draft' : 'edit';
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const timezone = zoneName();
   const seatCount = Number(fields.rows) * Number(fields.columns);
   const currencies = ['INR', 'USD', 'EUR', 'GBP'];
   if (mode === 'edit' && originalCurrency && !currencies.includes(originalCurrency)) currencies.push(originalCurrency);

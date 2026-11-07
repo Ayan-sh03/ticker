@@ -10,6 +10,7 @@ import (
 )
 
 var ErrNotFound = errors.New("booking not found")
+var ErrInvalidCursor = errors.New("invalid booking cursor")
 
 // PriceMinor is per seat; TotalMinor covers every booked seat. Status is
 // CONFIRMED, or CANCELLED once the customer or an organizer cancels the booking.
@@ -55,6 +56,52 @@ func Read(ctx context.Context, q Querier, userID, id string) (Receipt, error) {
 		receipt.Status = "CANCELLED"
 	}
 	return receipt, err
+}
+
+type EventBookings struct {
+	Bookings      []Receipt `json:"bookings"`
+	NextBefore    string    `json:"next_before,omitempty"`
+	TotalBookings int64     `json:"total_bookings"`
+	BookedSeatIDs []string  `json:"booked_seat_ids"`
+}
+
+// ForEvent reads one page and all owned seat IDs in the same snapshot. The
+// cursor uses retained booking history, so cancelling it cannot skip a page.
+func (s *Store) ForEvent(ctx context.Context, userID, eventID, before string) (EventBookings, error) {
+	const pageSize = 20
+	var result EventBookings
+	var validCursor bool
+	err := s.pool.QueryRow(ctx, `WITH active AS MATERIALIZED (
+        SELECT b.id, b.reservation_id, b.event_id, b.price_minor, b.currency, b.created_at
+        FROM bookings b WHERE b.user_id = $1 AND b.event_id = $2 AND b.cancelled_at IS NULL
+    ), page AS (
+        SELECT b.*, ARRAY(SELECT bs.seat_id::text FROM booking_seats bs WHERE bs.booking_id = b.id ORDER BY bs.seat_id) AS seat_ids
+        FROM active b
+        WHERE NULLIF($3, '')::uuid IS NULL OR (b.created_at, b.id) < (
+            SELECT c.created_at, c.id FROM bookings c WHERE c.id = NULLIF($3, '')::uuid AND c.user_id = $1 AND c.event_id = $2)
+        ORDER BY b.created_at DESC, b.id DESC LIMIT $4
+    ) SELECT
+        COALESCE((SELECT jsonb_agg(p ORDER BY p.created_at DESC, p.id DESC) FROM page p), '[]'::jsonb),
+        (SELECT count(*) FROM active),
+        ARRAY(SELECT bs.seat_id::text FROM active b JOIN booking_seats bs ON bs.booking_id = b.id ORDER BY bs.seat_id),
+        ($3 = '' OR EXISTS (SELECT 1 FROM bookings c WHERE c.id = NULLIF($3, '')::uuid AND c.user_id = $1 AND c.event_id = $2))`,
+		userID, eventID, before, pageSize+1).Scan(&result.Bookings, &result.TotalBookings, &result.BookedSeatIDs, &validCursor)
+	if err != nil {
+		return EventBookings{}, err
+	}
+	if !validCursor {
+		return EventBookings{}, ErrInvalidCursor
+	}
+	if len(result.Bookings) > pageSize {
+		result.Bookings = result.Bookings[:pageSize]
+		result.NextBefore = result.Bookings[pageSize-1].ID
+	}
+	for i := range result.Bookings {
+		receipt := &result.Bookings[i]
+		receipt.TotalMinor = receipt.PriceMinor * int64(len(receipt.SeatIDs))
+		receipt.Status = "CONFIRMED"
+	}
+	return result, nil
 }
 
 type Store struct{ pool *pgxpool.Pool }

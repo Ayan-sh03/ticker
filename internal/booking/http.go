@@ -14,6 +14,45 @@ import (
 )
 
 func RegisterRoutes(mux *http.ServeMux, store *Store, sessions *identity.Handler, logger *slog.Logger) {
+	// The caller's active bookings, newest first, with an optional before cursor.
+	mux.Handle("GET /bookings", sessions.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		query := r.URL.Query()
+		values := query["event_id"]
+		var id pgtype.UUID
+		if len(values) != 1 || len(values[0]) != 36 || values[0][8] != '-' || values[0][13] != '-' || values[0][18] != '-' || values[0][23] != '-' || id.Scan(values[0]) != nil {
+			w.WriteHeader(400)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "invalid_event_id", "message": "provide one event_id UUID"}})
+			return
+		}
+		before := ""
+		if values, exists := query["before"]; exists {
+			var cursor pgtype.UUID
+			if len(values) != 1 || len(values[0]) != 36 || values[0][8] != '-' || values[0][13] != '-' || values[0][18] != '-' || values[0][23] != '-' || cursor.Scan(values[0]) != nil {
+				w.WriteHeader(400)
+				_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "invalid_cursor", "message": "before must be one booking UUID"}})
+				return
+			}
+			before = cursor.String()
+		}
+		session, _ := identity.CurrentSession(r.Context())
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		receipts, err := store.ForEvent(ctx, session.User.ID, id.String(), before)
+		if errors.Is(err, ErrInvalidCursor) {
+			w.WriteHeader(400)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "invalid_cursor", "message": "booking page is unavailable; start from the latest bookings"}})
+			return
+		}
+		if err != nil {
+			logger.Error("booking request failed", "path", r.URL.Path, "error", err)
+			w.WriteHeader(503)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "booking_unavailable", "message": "booking service is temporarily unavailable"}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(receipts)
+	})))
 	mux.Handle("GET /bookings/{bookingID}", sessions.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")

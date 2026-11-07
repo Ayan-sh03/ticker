@@ -7,7 +7,10 @@ export interface Event {
   venue_name: string;
   price_minor: number;
   currency: string;
+  sales_open_at: string;
   starts_at: string;
+  // Only the event list sends this: seats on sale right now.
+  seats_available?: number;
 }
 
 export interface Seat {
@@ -147,6 +150,30 @@ export function price(event: Pick<Event, 'price_minor' | 'currency'>) {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: event.currency }).format(event.price_minor / 100);
 }
 
+export function when(iso: string) {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso));
+}
+
+// A readable zone name such as "India Standard Time". Browsers disagree on
+// IANA aliases (Asia/Calcutta and Asia/Kolkata are one zone), so names are
+// shown instead of IDs. With no zone, it names the browser's own.
+export function zoneName(zone?: string) {
+  for (const style of ['longGeneric', 'long'] as const) {
+    try {
+      const part = new Intl.DateTimeFormat(undefined, { timeZone: zone, timeZoneName: style }).formatToParts(new Date())
+        .find(item => item.type === 'timeZoneName');
+      if (part) return part.value;
+    } catch { /* Try the next style, then fall back to the ID. */ }
+  }
+  return zone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
 export function date(event: Event) {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(event.starts_at));
+  return when(event.starts_at);
+}
+
+// A hint from the browser clock for what to offer; the API decides with its own.
+export function sale(event: Event, now = Date.now()): 'upcoming' | 'open' | 'started' {
+  if (now >= Date.parse(event.starts_at)) return 'started';
+  return now < Date.parse(event.sales_open_at) ? 'upcoming' : 'open';
 }

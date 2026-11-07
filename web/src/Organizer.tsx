@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import { ApiError, date, price, request, type OrganizerEvent, type Session, type Tenant } from './api';
+import { ApiError, date, price, request, zoneName, type OrganizerEvent, type Session, type Tenant } from './api';
 import { usePrivateResource } from './usePrivateResource';
 import { OrganizerSeats } from './OrganizerSeats';
 import { OrganizerSales } from './OrganizerSales';
-import { EventInsights, TenantInsights } from './OrganizerInsights';
+import { EventInsights, TenantInsights, money, type EventSales } from './OrganizerInsights';
 import { ErrorMessage } from './Feedback';
 import { OrganizerForm } from './OrganizerForm';
 import { OrganizerEditForm } from './OrganizerEditForm';
@@ -53,16 +53,14 @@ function Workspace({ route, session, heading, onSessionExpired }: Omit<Props, 'c
   </>;
   const base = `organizer/${tenant.id}`;
   return <>
-    <a className="back-link" href={view ? `#${base}/${target}` : target ? `#${base}` : '#'}>← {view ? 'Event review' : target ? 'Organizer events' : 'All events'}</a>
-    <div className="organizer-toolbar">
-      <div className="organizer-field"><label htmlFor="organizer-tenant">Workspace</label>
-        <OrganizerSelect id="organizer-tenant" label="Workspace" value={tenant.id}
-          options={data.tenants.map(item => ({ value: item.id, label: item.name }))}
-          onChange={value => { location.hash = `organizer/${value}`; }} />
-      </div>
-      {!target && <div className="form-actions"><a className="button" href={`#${base}/insights`}>Insights <span aria-hidden="true">↗</span></a>
-        <a className="button button-solid" href={`#${base}/new`}>New event <span aria-hidden="true">↗</span></a></div>}
-    </div>
+    <a className="back-link" href={target ? `#${base}` : '#'}>← {target ? 'Your events' : 'All events'}</a>
+    {/* A single workspace is a fact, not a choice; its name is in each page's subline. */}
+    {data.tenants.length > 1 && !target && <div className="organizer-toolbar"><div className="organizer-field"><label htmlFor="organizer-tenant">Workspace</label>
+      <OrganizerSelect id="organizer-tenant" label="Workspace" value={tenant.id}
+        options={data.tenants.map(item => ({ value: item.id, label: item.name }))}
+        onChange={value => { location.hash = `organizer/${value}`; }} />
+    </div></div>}
+    {view && <EventTabs base={base} eventID={target} current={view} />}
     {target === 'new' ? <>
       <div className="page-heading"><h1 ref={heading} tabIndex={-1}>New event</h1><p>Create a private draft for {tenant.name}.</p></div>
       <OrganizerForm userID={session.user.id} tenantID={tenant.id} onSessionExpired={onSessionExpired} />
@@ -75,24 +73,50 @@ function Workspace({ route, session, heading, onSessionExpired }: Omit<Props, 'c
   </>;
 }
 
+type EventView = 'overview' | 'seats' | 'bookings' | 'insights';
+const eventViews: [EventView, string, string][] = [['overview', 'Overview', ''], ['seats', 'Seats', '/seats'], ['bookings', 'Bookings', '/bookings'], ['insights', 'Insights', '/insights']];
+
+// One row of tabs ties a published event's pages together.
+function EventTabs({ base, eventID, current }: { base: string; eventID: string; current: EventView }) {
+  return <nav className="event-tabs" aria-label="Event pages">
+    <div className="segmented">{eventViews.map(([key, label, path]) =>
+      <a key={key} className="button" href={`#${base}/${eventID}${path}`} aria-current={current === key ? 'page' : undefined}>{label}</a>)}</div>
+    <a className="text-button" href={`#${eventID}`}>View customer page</a>
+  </nav>;
+}
+
 function EventList({ tenant, userID, heading, onSessionExpired }: {
   tenant: Tenant; userID: string; heading: Props['heading']; onSessionExpired: () => void;
 }) {
   const [offset, setOffset] = useState(0);
+  const base = `organizer/${tenant.id}`;
   const { data, error, retry } = usePrivateResource<{ events: OrganizerEvent[] }>(`/organizer/tenants/${tenant.id}/events?limit=20&offset=${offset}`, userID, onSessionExpired);
+  // Sales for the latest published events; a row without them still links to its pages.
+  const insights = usePrivateResource<{ events: EventSales[] }>(`/organizer/tenants/${tenant.id}/insights`, userID, onSessionExpired);
+  const sales = new Map((insights.data?.events ?? []).map(item => [item.id, item]));
   return <>
     <div className="page-heading"><h1 ref={heading} tabIndex={-1}>Your events</h1><p>{tenant.name} · Drafts stay private until you publish.</p></div>
+    <div className="form-actions organizer-list-actions"><a className="button button-solid" href={`#${base}/new`}>New event</a>
+      <a className="button" href={`#${base}/insights`}>Workspace insights</a></div>
     {error && <ErrorMessage message={error} retry={retry} />}
     {!data && !error && <p className="loading" role="status">Loading events…</p>}
     {data && <>
       {data.events.length === 0 && <p className="organizer-empty">{offset ? 'No more events on this page.' : 'No events yet. Create your first draft.'}</p>}
-      <ul className="event-list">{data.events.map(event => <li key={event.id}>
-        <div className="event-entry"><div><p className="eyebrow">{date(event)} <span className={`organizer-status ${event.status.toLowerCase()}`}>{event.status === 'DRAFT' ? 'Draft' : 'Published'}</span></p>
-          <h2>{event.title}</h2><p>{event.venue_name}</p></div>
-          <div className="event-action"><span className="price">{price(event)}<small>per seat</small></span>
-            <a className="button" href={`#organizer/${tenant.id}/${event.id}`} aria-label={`Review ${event.title}`}>Review event <span aria-hidden="true">↗</span></a></div>
-        </div>
-      </li>)}</ul>
+      <ul className="organizer-events">{data.events.map(event => {
+        const sold = sales.get(event.id);
+        const draft = event.status === 'DRAFT';
+        return <li key={event.id} data-draft={draft || undefined}>
+          <div><h2><a href={`#${base}/${event.id}`}>{event.title}</a></h2>
+            <p>{draft && <><span className="organizer-status draft">Draft</span> · </>}{date(event)} · {event.venue_name} · {price(event)} per seat</p></div>
+          {draft ? <p className="organizer-event-sold">Private until you publish</p> : <>
+            <div className="organizer-event-sold">{sold ? <><span>{sold.seats_sold} of {sold.capacity} sold</span>
+              <span className="insight-track" aria-hidden="true"><span style={{ width: `${sold.capacity ? Math.min(100, sold.seats_sold / sold.capacity * 100) : 0}%` }} /></span></>
+              : <span>{insights.error ? 'Sales unavailable' : insights.data ? 'No sales data' : 'Loading sales…'}</span>}</div>
+            <p className="price">{sold?.bookings ? money(sold.net_minor, sold.currency) : '—'}<small>net</small></p></>}
+          <nav className="organizer-event-links" aria-label={`${event.title} pages`}>{draft ? <a href={`#${base}/${event.id}`}>Review draft</a>
+            : eventViews.slice(1).map(([key, label, path]) => <a key={key} href={`#${base}/${event.id}${path}`}>{label}</a>)}</nav>
+        </li>;
+      })}</ul>
     </>}
     {(offset > 0 || data?.events.length === 20) && <nav className="pagination" aria-label="Organizer event pages">
       <button className="button" disabled={offset === 0 || !data} onClick={() => setOffset(value => value - 20)}>Previous</button>
@@ -173,9 +197,10 @@ function EventDetail({ tenantID, eventID, userID, heading, onSessionExpired }: {
     } finally { busy.current = false; if (mounted.current) setPending(false); }
   }
   const event = resource.data?.event;
-  const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const localZone = zoneName();
   const formatTime = (value: string) => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
   return <>
+    {event?.status === 'PUBLISHED' && !editing && <EventTabs base={`organizer/${tenantID}`} eventID={event.id} current="overview" />}
     <div className="page-heading"><h1 ref={heading} tabIndex={-1}>{editing ? 'Edit event' : event?.title ?? 'Event review'}</h1><p>{event ? editing ? `Update ${event.title}.` : event.status === 'DRAFT' ? 'Private draft · Review the details before publishing.' : 'Published · Your event is visible to customers.' : 'Review your event details.'}</p></div>
     {resource.error && <ErrorMessage message={resource.error} retry={resource.retry} />}
     {!event && !resource.error && <p className="loading" role="status">Loading event…</p>}
@@ -183,11 +208,29 @@ function EventDetail({ tenantID, eventID, userID, heading, onSessionExpired }: {
       onSaved={updated => { resource.replace({ event: updated }); setEditing(false); setSaved(true); }}
       onCancel={() => setEditing(false)} onRecheck={recheck} onForbidden={resource.deny} onSessionExpired={onSessionExpired} /> : <>
       {saved && <p role="status">Changes saved.</p>}
+      <dl className="organizer-details">
+        <div><dt>Venue</dt><dd>{event.venue_name}</dd></div>
+        <div><dt>Price per seat</dt><dd>{price(event)} <span className="organizer-note">{event.currency}</span></dd></div>
+        <div><dt>Event starts</dt><dd>{formatTime(event.starts_at)}</dd></div>
+        <div><dt>Sales open</dt><dd>{formatTime(event.sales_open_at)}</dd></div>
+        <div><dt>Seat layout</dt><dd>{event.layout_rows} rows × {event.layout_columns} seats · {event.layout_rows * event.layout_columns} total</dd></div>
+        <div><dt>Status</dt><dd><span className={`organizer-status ${event.status.toLowerCase()}`}>{event.status === 'DRAFT' ? 'Draft' : 'Published'}</span></dd></div>
+      </dl>
+      <p className="organizer-note organizer-zone">Times shown in {localZone}.</p>
+      {event.description && <div className="organizer-description"><h2>Description</h2><p>{event.description}</p></div>}
+      {event.status === 'DRAFT' && <div className="organizer-confirm"><h2>Ready to publish?</h2>
+        <p>Publishing makes this event public and creates its seats. You can edit price, currency, and the seat layout until the first reservation.</p>
+        {error && <p className="error" role="alert">{error}</p>}
+        <div className="form-actions"><button className="button button-solid" disabled={pending || confirmDelete || deleteNeedsRecheck} onClick={() => void publish()}>{pending ? confirmDelete ? 'Deleting…' : 'Publishing…' : uncertain ? 'Retry publication' : 'Publish event'}</button>
+          {uncertain && <button className="button" disabled={pending} onClick={recheck}>Recheck event</button>}</div>
+      </div>}
+      <section className="organizer-confirm" aria-labelledby="organizer-manage-title"><h2 id="organizer-manage-title">{event.price_layout_editable ? 'Edit or delete' : 'Edit'}</h2>
+      {event.status === 'PUBLISHED' && <p className="organizer-note">{event.price_layout_editable ? 'You can edit price, currency, and the seat layout until the first reservation.' : 'Price, currency, and the seat layout are fixed after the first reservation.'}</p>}
       <div className="form-actions">
         <button className="button" disabled={pending || confirmDelete || deleteNeedsRecheck} onClick={() => { setSaved(false); setEditing(true); }}>Edit event</button>
-        <button className="button" disabled={pending || confirmDelete || !event.price_layout_editable || deleteNeedsRecheck} onClick={() => { setSaved(false); setDeleteError(''); setConfirmDelete(true); }}>Delete event</button>
+        {event.price_layout_editable && <button className="button" disabled={pending || confirmDelete || deleteNeedsRecheck} onClick={() => { setSaved(false); setDeleteError(''); setConfirmDelete(true); }}>Delete event</button>}
       </div>
-      {!event.price_layout_editable && <p className="organizer-note">Deletion is unavailable after the first reservation to preserve booking history.</p>}
+      {!event.price_layout_editable && <p className="organizer-note">The event cannot be deleted after its first reservation, so its booking history stays intact.</p>}
       {confirmDelete && <div className="organizer-confirm" role="region" aria-labelledby="organizer-delete-title">
         <h2 id="organizer-delete-title" ref={deleteHeading} tabIndex={-1}>Delete {event.title}?</h2>
         <p>This permanently removes the event and its seats.</p>
@@ -198,22 +241,7 @@ function EventDetail({ tenantID, eventID, userID, heading, onSessionExpired }: {
           <button className="button" disabled={pending} onClick={() => { if (deleteNeedsRecheck) recheck(); else setConfirmDelete(false); }}>Cancel</button>
         </div>
       </div>}
-      <dl className="organizer-details">
-        <div><dt>Venue</dt><dd>{event.venue_name}</dd></div>
-        <div><dt>Price per seat</dt><dd>{price(event)} <span className="organizer-note">{event.currency}</span></dd></div>
-        <div><dt>Event starts</dt><dd>{formatTime(event.starts_at)}</dd></div>
-        <div><dt>Sales open</dt><dd>{formatTime(event.sales_open_at)}</dd></div>
-        <div><dt>Seat layout</dt><dd>{event.layout_rows} rows × {event.layout_columns} seats · {event.layout_rows * event.layout_columns} total</dd></div>
-        <div><dt>Status</dt><dd><span className={`organizer-status ${event.status.toLowerCase()}`}>{event.status === 'DRAFT' ? 'Draft' : 'Published'}</span></dd></div>
-      </dl>
-      <p className="organizer-note">Times shown in {localZone}.</p>
-      {event.description && <div className="organizer-description"><h2>Description</h2><p>{event.description}</p></div>}
-      {event.status === 'DRAFT' ? <div className="organizer-confirm"><h2>Ready to publish?</h2>
-        <p>Publishing makes this event public and creates its seats. You can edit price, currency, and the seat layout until the first reservation.</p>
-        {error && <p className="error" role="alert">{error}</p>}
-        <div className="form-actions"><button className="button button-solid" disabled={pending || confirmDelete || deleteNeedsRecheck} onClick={() => void publish()}>{pending ? confirmDelete ? 'Deleting…' : 'Publishing…' : uncertain ? 'Retry publication' : 'Publish event'}</button>
-          {uncertain && <button className="button" disabled={pending} onClick={recheck}>Recheck event</button>}</div>
-      </div> : <div className="organizer-confirm"><p>{event.price_layout_editable ? 'You can edit price, currency, and the seat layout until the first reservation.' : 'Price, currency, and the seat layout are fixed after the first reservation.'}</p><div className="form-actions"><a className="button button-solid" href={`#organizer/${tenantID}/${event.id}/seats`}>Manage seats <span aria-hidden="true">↗</span></a><a className="button" href={`#organizer/${tenantID}/${event.id}/bookings`}>Bookings <span aria-hidden="true">↗</span></a><a className="button" href={`#organizer/${tenantID}/${event.id}/insights`}>Insights <span aria-hidden="true">↗</span></a><a className="button" href={`#${event.id}`}>View customer page <span aria-hidden="true">↗</span></a></div></div>}
+      </section>
     </>)}
   </>;
 }
