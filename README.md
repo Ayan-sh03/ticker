@@ -131,6 +131,37 @@ docker compose --profile observability up -d       # Grafana on :3000, Prometheu
 
 The edge refreshes API and web addresses through Docker DNS, so replacing either container does not require an edge restart. A single-instance restart still causes a brief outage while the service starts and DNS refreshes.
 
+### Measure database saturation
+
+With metrics enabled, `/api/metrics` includes database timings alongside the Go and rate-limit metrics. Collect before/after counter differences or use Prometheus `rate()` over the load window:
+
+| Metric | Meaning |
+|---|---|
+| `ticker_db_acquire_seconds` | Histogram of pool acquisition time, including queueing and new connections; success and error outcomes are separate |
+| `ticker_db_pool_empty_wait_seconds_total` / `ticker_db_pool_empty_acquires_total` | Cumulative wait and count for successful acquires that found an empty pool; their rate ratio is the mean wait for those acquires |
+| `ticker_db_pool_cancelled_acquires_total` | Acquires abandoned when their context ended |
+| `ticker_db_pool_acquired_connections`, `ticker_db_pool_idle_connections`, `ticker_db_pool_max_connections` | Pool occupancy and limit |
+| `ticker_db_query_seconds` | Query duration after acquisition through row consumption, labelled `catalog_list`, `catalog_event`, `catalog_seats`, or `other`, and by outcome |
+| `ticker_db_batch_seconds` | Duration of a whole SQL batch, such as confirmation writes, through result consumption; separate from individual query timings |
+
+Query timing includes network time, database waits, and client row consumption. It is not pure server execution time. No SQL text, arguments, or customer identifiers are metric labels. `METRICS_ENABLED=false` disables the tracer and endpoint.
+
+To distinguish database waits from pool queueing, sample this read-only query during the run, in separate transactions. A null wait event for an active backend means it is running or runnable, not necessarily consuming CPU at that instant. Compare it with database CPU use and throttling.
+
+```sql
+SELECT state, wait_event_type, wait_event, count(*)
+FROM pg_stat_activity
+WHERE datname = current_database()
+  AND backend_type = 'client backend' AND pid <> pg_backend_pid()
+GROUP BY state, wait_event_type, wait_event;
+```
+
+For server-side execution totals, enable `pg_stat_statements` on the measurement database and compare its counters before and after each run. Use `EXPLAIN (ANALYZE, BUFFERS)` on the catalog query with both first-page and later-page parameters. See PostgreSQL's [statistics documentation](https://www.postgresql.org/docs/18/monitoring-stats.html) and [EXPLAIN guide](https://www.postgresql.org/docs/18/using-explain.html).
+
+The catalog pages events before counting their available seats, so skipped events do not trigger counts. A partial index covers available seats by tenant and event; open holds are still subtracted at read time, and overdue holds count as free. These remain fresh SQL counts. Index-only scans can still fetch heap pages while seats change.
+
+Keep the API pool at its default of 12 while comparing database CPU allocations. Use the same dataset and offered load, include browsing pauses and reads alongside writes, and report latency, errors, missed arrivals, pool waits, query time, database waits, and generator CPU. Run load only against an isolated database; mixed journeys create reservation and booking history.
+
 ## Check it yourself
 
 Do not trust the README. Run the audit. It reads one snapshot of the database, changes nothing, and checks the rules that span tables. This is real output from the demo database:
