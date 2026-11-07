@@ -289,6 +289,14 @@ export function useReservation(eventID: string, userID: string | undefined, onSe
     cancel: () => { if (reservation?.status === 'HELD') start({ kind: 'cancel', reservationID: reservation.id }); },
     cancelBooking: () => { if (booking && booking.status !== 'CANCELLED') start({ kind: 'cancel_booking', bookingID: booking.id }); },
     retry: () => { void run(saved.current.pending); },
+    // Shows a booking found elsewhere (another tab or device) in this tab.
+    view: (receipt: Booking) => {
+      if (!userID || !ready || saved.current.pending || reservation?.status === 'HELD' || !interruptRead()) return;
+      if (!persist({ reservationID: receipt.reservation_id, bookingID: receipt.id })) return;
+      receiptID.current = receipt.id;
+      setReservation(undefined); setBooking(undefined); setClock(undefined); setError('');
+      void run();
+    },
     clear: () => {
       if (!saved.current.pending && reservation && reservation.status !== 'HELD' && interruptRead() && persist({})) {
         receiptID.current = undefined;

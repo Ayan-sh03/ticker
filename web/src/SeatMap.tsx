@@ -257,10 +257,11 @@ export const SeatMap = memo(function SeatMap({ seats, look, onToggle, onRange, r
   </div>;
 });
 
-export function SeatLegend({ label }: { label: string }) {
+// Organizers see every state; customers pass their own, shorter set.
+const allTones: [SeatTone, string][] = [['available', 'Available'], ['selected', 'Selected'], ['held', 'Held'], ['booked', 'Booked'], ['blocked', 'Blocked']];
+
+export function SeatLegend({ label, items = allTones }: { label: string; items?: [SeatTone, string][] }) {
   return <ul className="legend" aria-label={label}>
-    {(['available', 'selected', 'held', 'booked', 'blocked'] as const).map(tone => <li key={tone}>
-      <span className="legend-mark" data-tone={tone} aria-hidden="true" />{{ available: 'Available', selected: 'Selected', held: 'Held', booked: 'Booked', blocked: 'Blocked' }[tone]}
-    </li>)}
+    {items.map(([tone, name]) => <li key={tone}><span className="legend-mark" data-tone={tone} aria-hidden="true" />{name}</li>)}
   </ul>;
 }

@@ -110,13 +110,13 @@ function EventIndex({ heading }: { heading: React.RefObject<HTMLHeadingElement |
       {data.events.length === 0 && <p>No events are listed here yet.</p>}
       <ul className="event-list">{data.events.map(event => {
         const state = sale(event);
-        const soldOut = state !== 'started' && event.seats_available === 0;
+        const seatsUnavailable = event.seats_available === 0;
         return <li key={event.id}>
-          <div className="event-entry"><div><p className="eyebrow">{date(event)}</p><h2>{event.title}</h2><p>{event.venue_name}</p></div>
+          <div className="event-entry"><div><h2>{event.title}</h2><p>{date(event)} · {event.venue_name}</p></div>
             <div className="event-action"><span className="price">{price(event)}<small>per seat</small>
               {state !== 'open' ? <small className="sale-state">{state === 'started' ? 'Event started' : `On sale ${when(event.sales_open_at)}`}</small>
-                : event.seats_available !== undefined && <small className="sale-state">{soldOut ? 'Sold out' : `${event.seats_available} ${event.seats_available === 1 ? 'seat' : 'seats'} left`}</small>}</span>
-              <a className={`button ${state === 'open' && !soldOut ? 'button-solid' : ''}`} href={`#${event.id}`} aria-label={`${state === 'started' ? 'View' : 'View seats for'} ${event.title}`}>{state === 'started' ? 'View event' : 'View seats'}</a></div>
+                : event.seats_available !== undefined && <small className="sale-state">{seatsUnavailable ? 'No seats available' : `${event.seats_available} ${event.seats_available === 1 ? 'seat' : 'seats'} left`}</small>}</span>
+              <a className={`button ${state === 'open' && !seatsUnavailable ? 'button-solid' : ''}`} href={`#${event.id}`} aria-label={`${state === 'started' ? 'View' : 'View seats for'} ${event.title}`}>{state === 'started' ? 'View event' : 'View seats'}</a></div>
           </div>
         </li>;
       })}</ul>
