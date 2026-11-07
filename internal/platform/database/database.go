@@ -17,6 +17,9 @@ func Open(ctx context.Context, cfg config.Config) (*pgxpool.Pool, error) {
 	}
 	poolConfig.MaxConns = cfg.DBMaxConns
 	poolConfig.ConnConfig.ConnectTimeout = 5 * time.Second
+	if cfg.Metrics {
+		poolConfig.ConnConfig.Tracer = newMetricsTracer()
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("create database pool: %w", err)
