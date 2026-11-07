@@ -11,9 +11,11 @@ type Summary = { bookings: number; cancelled_bookings: number; seats_sold: numbe
 type View = 'bookings' | 'open' | 'expired' | 'cancelled';
 
 const pageSize = 20;
-const views: { value: View; label: string }[] = [
-  { value: 'bookings', label: 'Bookings' }, { value: 'open', label: 'Open holds' },
-  { value: 'expired', label: 'Expired' }, { value: 'cancelled', label: 'Cancelled' },
+const views: { value: View; label: string; count: (summary: Summary) => number }[] = [
+  { value: 'bookings', label: 'Bookings', count: summary => summary.bookings + summary.cancelled_bookings },
+  { value: 'open', label: 'Open holds', count: summary => summary.open_holds },
+  { value: 'expired', label: 'Expired holds', count: summary => summary.expired_holds },
+  { value: 'cancelled', label: 'Cancelled holds', count: summary => summary.cancelled_holds },
 ];
 const when = (value: string) => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 const seats = (labels: string[]) => `${labels.length} ${labels.length === 1 ? 'seat' : 'seats'} · ${labels.join(', ')}`;
@@ -80,14 +82,13 @@ export function OrganizerSales({ tenantID, eventID, userID, heading, onSessionEx
         <div><dt>Active bookings</dt><dd>{summary.bookings}</dd></div>
         <div><dt>Seats sold</dt><dd>{summary.seats_sold}</dd></div>
         <div><dt>Cancelled bookings</dt><dd>{summary.cancelled_bookings}</dd></div>
-        <div><dt>Open holds</dt><dd>{summary.open_holds}</dd></div>
-        <div><dt>Expired holds</dt><dd>{summary.expired_holds}</dd></div>
-        <div><dt>Cancelled holds</dt><dd>{summary.cancelled_holds}</dd></div>
       </dl>}
-      <div className="organizer-tabs" role="group" aria-label="Show">
-        {views.map(item => <button key={item.value} className="button" aria-pressed={view === item.value}
-          onClick={() => { setView(item.value); setPages([]); if (view === item.value) list.retry(); }}>{item.label}</button>)}
-        <button className="button" disabled={!list.data && !list.error} onClick={() => list.retry()}>Refresh</button>
+      <div className="organizer-filters">
+        <div className="segmented" role="group" aria-label="Show">
+          {views.map(item => <button key={item.value} className="button" aria-pressed={view === item.value}
+            onClick={() => { setView(item.value); setPages([]); if (view === item.value) list.retry(); }}>{item.label}{summary && <span className="segmented-count">{item.count(summary)}</span>}</button>)}
+        </div>
+        <button className="text-button" disabled={!list.data && !list.error} onClick={() => list.retry()}>Refresh</button>
       </div>
       {view === 'bookings' && <form className="organizer-field organizer-search" role="search" onSubmit={submit => { submit.preventDefault(); runSearch(draft); }}>
         <label htmlFor="booking-search">Search bookings</label>

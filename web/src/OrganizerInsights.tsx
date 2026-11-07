@@ -6,7 +6,7 @@ import { zoneName } from './api';
 
 // Money arrives as exact decimal strings of minor units; sums can exceed what a JavaScript number holds.
 type Revenue = { bookings: number; seats_sold: number; gross_minor: string; fee_minor: string; net_minor: string };
-type EventSales = Revenue & { id: string; title: string; starts_at: string; currency: string; capacity: number; interested: number };
+export type EventSales = Revenue & { id: string; title: string; starts_at: string; currency: string; capacity: number; interested: number };
 type Count = { key: number; count: number };
 type Tenant = { time_zone: string; fee_bps: number; totals: (Revenue & { currency: string })[]; events: EventSales[]; event_count: number };
 type Event = {
@@ -19,7 +19,7 @@ type Event = {
 type Props = { tenantID: string; userID: string; heading: RefObject<HTMLHeadingElement | null>; onSessionExpired: () => void };
 
 // Formats minor units exactly: Intl formats a decimal string without rounding it through a float.
-function money(minor: string, currency: string) {
+export function money(minor: string, currency: string) {
   const negative = minor.startsWith('-');
   const digits = (negative ? minor.slice(1) : minor).padStart(3, '0');
   const decimal = `${negative ? '-' : ''}${digits.slice(0, -2)}.${digits.slice(-2)}`;

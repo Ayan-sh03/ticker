@@ -115,6 +115,7 @@ export function OrganizerSeats({ tenantID, eventID, userID, heading, onSessionEx
   }
 
   const current = event.data?.event;
+  const coarse = window.matchMedia('(pointer: coarse)').matches;
   return <>
     <div className="page-heading"><h1 ref={heading} tabIndex={-1}>Seats</h1><p>{current ? `${current.title} · Block seats to keep them off sale.` : 'Manage seat availability.'}</p></div>
     {(event.error || inventory.error) && <ErrorMessage message={event.error ?? inventory.error!} retry={() => { event.retry(); inventory.retry(); }} />}
@@ -136,7 +137,8 @@ export function OrganizerSeats({ tenantID, eventID, userID, heading, onSessionEx
       </div>
       <SeatLegend label="Seat status" />
       <SeatMap seats={seats} look={look} onToggle={id => toggle([id])} onRange={setRange} rowAction={rowAction} sectionHeading="h2" hintVisible
-        hint="Drag or shift-click to select a block of seats. Select a row by its number. Arrow keys move between seats." />
+        hint={coarse ? 'Tap seats to select them, or tap a row number to select the whole row.'
+          : 'Drag or shift-click to select a block of seats. Select a row by its number. Arrow keys move between seats.'} />
     </div>)}
   </>;
 }
