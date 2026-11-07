@@ -255,11 +255,12 @@ func (s *Store) Cancel(ctx context.Context, userID, id string) (Reservation, err
 		if err := tx.QueryRow(ctx, "SELECT clock_timestamp() >= expires_at FROM reservations WHERE id = $1", id).Scan(&expired); err != nil {
 			return Reservation{}, err
 		}
-		status, reason := "CANCELLED", "customer_request"
+		status, reason, actor := "CANCELLED", "customer_request", userID
 		if expired {
 			status, reason = "EXPIRED", "deadline_passed"
+			actor = ""
 		}
-		if err := release(ctx, tx, id, "HELD", status, userID, reason); err != nil {
+		if err := release(ctx, tx, id, "HELD", status, actor, reason); err != nil {
 			return Reservation{}, err
 		}
 	}

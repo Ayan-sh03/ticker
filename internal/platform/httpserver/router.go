@@ -8,13 +8,13 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"ticker/internal/booking"
 	"ticker/internal/catalog"
 	"ticker/internal/identity"
 	"ticker/internal/interest"
 	"ticker/internal/organizer"
+	"ticker/internal/platform/database"
 	"ticker/internal/platform/ratelimit"
 	"ticker/internal/reservation"
 )
@@ -39,7 +39,7 @@ func Router(pool *pgxpool.Pool, logger *slog.Logger, options identity.Options, m
 		respond(w, http.StatusOK, "ready")
 	})
 	if metrics {
-		mux.Handle("GET /metrics", promhttp.Handler())
+		mux.Handle("GET /metrics", database.MetricsHandler(pool))
 	}
 	catalog.RegisterRoutes(mux, catalog.NewStore(pool), logger)
 	identityHandler := identity.RegisterRoutes(mux, sessions, logger, options)
