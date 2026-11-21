@@ -38,10 +38,16 @@ func (s *Store) Confirm(ctx context.Context, userID, key, id string) (Result, er
 		return Result{Status: *savedStatus, Body: body}, nil
 	}
 
+	// Lock the event before the reservation so a schedule edit cannot race the cutoff.
+	var startsAt, expiresAt time.Time
 	var status string
-	var expiresAt time.Time
-	err = tx.QueryRow(ctx, `SELECT status, expires_at FROM reservations
-        WHERE id = $1 AND user_id = $2 FOR UPDATE`, id, userID).Scan(&status, &expiresAt)
+	err = tx.QueryRow(ctx, `SELECT e.starts_at FROM reservations r
+        JOIN events e ON e.id = r.event_id AND e.tenant_id = r.tenant_id
+        WHERE r.id = $1 AND r.user_id = $2 FOR SHARE OF e`, id, userID).Scan(&startsAt)
+	if err == nil {
+		err = tx.QueryRow(ctx, `SELECT status, expires_at FROM reservations
+            WHERE id = $1 AND user_id = $2 FOR UPDATE`, id, userID).Scan(&status, &expiresAt)
+	}
 	result := failure(404, "reservation_not_found", "reservation not found")
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return Result{}, err
@@ -62,15 +68,15 @@ func (s *Store) Confirm(ctx context.Context, userID, key, id string) (Result, er
 			return Result{}, err
 		}
 		result = failure(409, "reservation_not_confirmable", "reservation is no longer confirmable")
-		if status == "HELD" && now.Before(expiresAt) && ownsSeats {
+		if status == "HELD" && now.Before(expiresAt) && now.Before(startsAt) && ownsSeats {
 			var bookingID string
 			// The booking keeps the fee rate in force now, so later rate changes affect only new bookings.
-			if err := tx.QueryRow(ctx, `INSERT INTO bookings (tenant_id, event_id, reservation_id, user_id, price_minor, currency, fee_bps)
+			if err := tx.QueryRow(ctx, `INSERT INTO bookings (tenant_id, event_id, reservation_id, user_id, price_minor, currency, fee_bps, created_at)
                 SELECT r.tenant_id, r.event_id, r.id, r.user_id, e.price_minor, e.currency,
-                    coalesce(t.fee_bps, (SELECT fee_bps FROM platform_settings))
+                    coalesce(t.fee_bps, (SELECT fee_bps FROM platform_settings)), $2
                 FROM reservations r JOIN events e ON e.id = r.event_id AND e.tenant_id = r.tenant_id
                 JOIN tenants t ON t.id = r.tenant_id
-                WHERE r.id = $1 RETURNING id::text`, id).Scan(&bookingID); err != nil {
+                WHERE r.id = $1 RETURNING id::text`, id, now).Scan(&bookingID); err != nil {
 				return Result{}, err
 			}
 			// Eligibility and lock acquisition are complete. Send these writes in

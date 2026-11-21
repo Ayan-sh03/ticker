@@ -201,6 +201,9 @@ func allocate(ctx context.Context, tx pgx.Tx, userID, key, eventID string, seatI
 	// The hold starts once every seat lock is acquired.
 	reservation.CreatedAt = reservation.ServerTime
 	reservation.ExpiresAt = reservation.ServerTime.Add(5 * time.Minute)
+	if startsAt.Before(reservation.ExpiresAt) {
+		reservation.ExpiresAt = startsAt
+	}
 	if err := tx.QueryRow(ctx, `INSERT INTO reservations (tenant_id, event_id, user_id, quantity, created_at, expires_at)
 		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id::text, status`,
 		tenantID, eventID, userID, len(seatIDs), reservation.CreatedAt, reservation.ExpiresAt).

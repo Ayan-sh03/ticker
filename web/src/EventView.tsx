@@ -281,7 +281,7 @@ export function EventView({ id, heading, session, checking, selectedIDs, select,
             <button className="button button-solid" disabled={!hold.canConfirm} onClick={hold.confirm}>Confirm</button>
           </div> : !occupied && selected.length > 0 && <div className="selection-bar" role="region" aria-label="Your selection summary">
             <p><strong>{total(event.data.event, selected.length)}</strong>{seatCount(selected.length)}</p>
-            <button className="button button-solid" disabled={reserveDisabled} onClick={reserve}>{session ? 'Reserve for 5 min' : 'Log in to reserve'}</button>
+            <button className="button button-solid" disabled={reserveDisabled} onClick={reserve}>{session ? 'Reserve for up to 5 min' : 'Log in to reserve'}</button>
           </div>}
         </section>
         <aside className="selection" id="your-selection" tabIndex={-1} aria-labelledby="selection-heading"><h2 id="selection-heading">{title}</h2>
@@ -293,7 +293,7 @@ export function EventView({ id, heading, session, checking, selectedIDs, select,
           {/* During a hold the clock and the decision come first, so they stay in view. */}
           {holding && <div className="hold-clock">
             {hold.seconds > 0 && <p className="countdown" data-urgent={hold.seconds <= 60 || undefined} role="timer" aria-label="Time remaining">{clock} <small>remaining</small></p>}
-            <p>{!hold.clockReady ? 'Checking your hold before confirmation.' : hold.seconds > 0 ? `${hold.seconds <= 60 ? 'Less than a minute left. ' : ''}Confirm before the timer ends, or the ${owned === 1 ? 'seat goes' : 'seats go'} back on sale.`
+            <p>{!hold.clockReady ? 'Checking your hold before confirmation.' : hold.seconds > 0 ? `${hold.seconds <= 60 ? 'Less than a minute left. ' : ''}Confirm before the timer ends to book ${owned === 1 ? 'this seat' : 'these seats'}.`
               : `Your hold deadline has passed. Waiting for the server to release the ${owned === 1 ? 'seat' : 'seats'}.`}</p>
             {/* The timer itself is silent; this announces the two warnings once each. */}
             <p className="visually-hidden" aria-live="polite">{hold.seconds > 0 && hold.seconds <= 15 ? '15 seconds left on your hold.' : hold.seconds > 0 && hold.seconds <= 60 ? 'Less than a minute left on your hold.' : ''}</p>
@@ -325,7 +325,7 @@ export function EventView({ id, heading, session, checking, selectedIDs, select,
               {lost.length > 0 && <p className="error" role="status">{seatConflict} {lost.length === 1 ? `Seat ${lost[0]} was` : `Seats ${lost.join(', ')} were`} taken.{selected.length ? ` Your other ${selected.length === 1 ? 'seat is' : 'seats are'} still selected.` : ''}</p>}
               {selected.length ? <><SeatSummary seats={selected} sections={sections} />
                 <p>A selection does not hold {selected.length === 1 ? 'the seat' : 'the seats'}.</p>
-                <div className="reservation-actions"><button className="button button-solid" disabled={reserveDisabled} onClick={reserve}>{session ? `Reserve ${seatCount(selected.length)} for 5 min` : 'Log in to reserve'}</button>
+                <div className="reservation-actions"><button className="button button-solid" disabled={reserveDisabled} onClick={reserve}>{session ? `Reserve ${seatCount(selected.length)} for up to 5 min` : 'Log in to reserve'}</button>
                   <button className="button" onClick={() => { select([]); setLost([]); setNotice(''); }}>Clear selection</button></div></>
                 : !lost.length && <p>{onSale === 'upcoming' ? `Seats go on sale ${when(event.data.event.sales_open_at)}.` : 'No seats selected yet.'}</p>}
             </>}
