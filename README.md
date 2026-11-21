@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Ayan-sh03/ticker/actions/workflows/ci.yml/badge.svg)](https://github.com/Ayan-sh03/ticker/actions/workflows/ci.yml)
 
-Ticker is a seat reservation system for events. You pick up to six seats, hold them for five minutes, and confirm a booking. Organizers make events, block seats, see who booked, cancel bookings, and read sales numbers.
+Ticker is a seat reservation system for events. You pick up to six seats, hold them for up to five minutes, and confirm a booking before the event starts. Organizers make events, block seats, see who booked, cancel bookings, and read sales numbers.
 
 The main goal is simple: **a seat is never sold twice**, even when many people click at the same time. A hold gets all of its seats or none. And you can check every rule after the fact.
 
@@ -19,7 +19,7 @@ The main goal is simple: **a seat is never sold twice**, even when many people c
 **Customers**
 - See published events, how many seats each has left, and live seat availability. Held and blocked seats do not count as available.
 - Sign up with a six-digit code from email, or log in.
-- Hold 1–6 seats for 5 minutes. If someone takes a seat first, the page names that seat and keeps the others selected.
+- Hold 1–6 seats until five minutes pass or the event starts, whichever comes first. Moving the start earlier can shorten an open hold. Postponing the event never extends a hold. If someone takes a seat first, the page names that seat and keeps the others selected.
 - Confirm the hold to get a booking and a receipt. Or cancel the hold. A hold made in one tab or device shows up in the others.
 - Find your active bookings for an event from any tab or device and open their receipts. Older bookings are paginated; all your booked seats stay marked on the map.
 - Cancel your confirmed booking from its receipt before the event starts. Its seats go back on sale.
@@ -64,7 +64,7 @@ sequenceDiagram
     API->>DB: A: lock the event, then R1-S7
     API->>DB: B: lock the event, then both seats in ID order (waits for A at R1-S7)
     DB-->>API: A: R1-S7 is free under the lock. Insert the hold. Commit.
-    API-->>A: 201 Created. Hold for 5 minutes.
+    API-->>A: 201 Created. Hold until the earlier of 5 minutes or event start.
     DB-->>API: B: gets the R1-S7 lock. Reads again: R1-S7 is held.
     API->>DB: B: undo its seat locks (savepoint). Save the 409 for a retry.
     API-->>B: 409. R1-S7 was taken. B holds no seats.
@@ -76,7 +76,7 @@ Four ideas make this safe:
 
 1. **A quick check first.** A read without locks turns away most requests for a seat that is already taken. It is only a shortcut. The real decision comes next.
 2. **Lock, then read again.** A request decides only after it holds every lock it needs. A read from before the lock can be old. A read under the lock cannot.
-3. **One lock order everywhere.** Locks always go in one direction: the event, then reservations, then seats by ID. A path can start later in the line (a confirm starts at its reservation), but it never goes back. So two requests can never wait for each other in a circle, and they cannot deadlock.
+3. **One lock order everywhere.** Reserve and confirm lock the event before reservations, then seats by ID. Confirmation checks the database clock after acquiring every inventory lock. Expiration can start at the reservation because it uses the stored hold deadline.
 4. **The database is the last guard.** Partial unique indexes let each seat have only one active hold, and only one active booking. If the code had a bug and tried to add a second one, the insert fails.
 
 The saved 409 matters too. If B's network drops and B retries with the same request key, B gets the same 409 again, not a new attempt.

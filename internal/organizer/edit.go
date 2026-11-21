@@ -91,6 +91,14 @@ func (s *Store) UpdateEvent(ctx context.Context, userID, tenantID, eventID strin
 	if err != nil {
 		return Event{}, layoutError(err)
 	}
+	// Keep countdowns and expiry on the same deadline. Postponing never extends a hold.
+	if event.StartsAt.Before(existing.StartsAt) {
+		if _, err := tx.Exec(ctx, `UPDATE reservations SET expires_at = $3
+			WHERE tenant_id = $1 AND event_id = $2 AND status = 'HELD' AND expires_at > $3`,
+			tenantID, eventID, event.StartsAt); err != nil {
+			return Event{}, err
+		}
+	}
 	if layoutChanged && existing.Status == "PUBLISHED" {
 		for _, section := range sections {
 			if _, err := tx.Exec(ctx, `INSERT INTO seats (tenant_id, event_id, section, row_number, seat_number, label)
